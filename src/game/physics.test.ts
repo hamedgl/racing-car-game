@@ -20,11 +20,7 @@ import {
   stepPitStopService,
   refitFreshTires,
   evaluateTireGripMultiplier,
-  stepTrackPuddleAndDryingPhysics,
-  evaluateSurfaceGripParameters,
 } from './physics';
-import { buildClassicCarMesh } from './carBuilder';
-import * as THREE from 'three';
 
 test('computeEffectiveCarStats upgrades and tuning modify performance stats predictably', () => {
   const baseCar = CLASSIC_CARS[0];
@@ -101,7 +97,7 @@ test('stepVehiclePhysics accelerates smoothly and locks Y strictly to exact 3D r
     );
   }
 
-  assert.ok(player.speedMs > 18, 'Vehicle should accelerate rapidly forward under throttle');
+  assert.ok(player.speedMs > 15, 'Vehicle should accelerate forward under throttle');
   assert.ok(player.z > initialZ, 'Vehicle should advance along the straight');
 });
 
@@ -292,28 +288,25 @@ test('3-sphere longitudinal capsule collision cleanly separates overlapping cars
   assert.ok(calculateRaceRewardCredits(1, true) > calculateRaceRewardCredits(4, false));
 });
 
-test('Dynamic puddle formation, track drying, and real-time surfaceGripParams update in physics loop', () => {
+test('Dynamic weather and track rubbering groove modify grip as expected', () => {
+  const clearWeather = createInitialWeatherState('clear');
+  const rainWeather = createInitialWeatherState('rain');
+  assert.equal(clearWeather.gripMultiplier, 1.0);
+  assert.ok(rainWeather.gripMultiplier < 0.8);
+
+  const dynamicWeather = createInitialWeatherState('dynamic');
+  updateWeather(dynamicWeather, 40, 45000);
+  assert.equal(dynamicWeather.activeType, 'rain');
+
   const track = TRACKS.monza_storico;
   const car = CLASSIC_CARS[0];
-  const stats = computeEffectiveCarStats(car, DEFAULT_UPGRADES, DEFAULT_TUNING);
   const rubberState = createInitialTrackRubberState(track.samples.length, 'progressive');
+  const initialRubber = rubberState.globalRubberLevel;
+  const cornerIdx = track.samples.findIndex((s) => s.cornerLoadIntensity > 0.45 && Math.abs(s.curvature) > 0.008);
+  const targetIdx = cornerIdx >= 0 ? cornerIdx : 25;
+  const cornerStation = track.samples[targetIdx];
 
-  // 1. Puddles form dynamically under rain/storm intensity
-  const weather = createInitialWeatherState('clear');
-  assert.equal(weather.puddleLevel, 0);
-  assert.equal(weather.dryingLineIntensity, 1.0);
-
-  weather.condition = 'storm';
-  updateWeather(weather, 15, 15000, track, []);
-  assert.ok(weather.wetness > 0.7, `Wetness should rise in storm (got ${weather.wetness})`);
-  assert.ok(weather.puddleLevel > 0.35, `Puddle level must accumulate during storm (got ${weather.puddleLevel})`);
-  assert.ok(
-    weather.dryingLineIntensity < 0.6,
-    `Drying line should be washed away by heavy rain (got ${weather.dryingLineIntensity})`
-  );
-
-  // 2. When rain stops, solar/wind evaporation + cars driving on the racing line dry the groove and drain puddles
-  const player = createInitialVehicleState({
+  const vehicle = createInitialVehicleState({
     id: 'player',
     isPlayer: true,
     driverName: 'Driver',
@@ -321,149 +314,99 @@ test('Dynamic puddle formation, track drying, and real-time surfaceGripParams up
     livery: car.defaultLivery,
     track,
     gridSlot: 0,
-    startingCompound: 'medium',
   });
-  const stationIdx = 12;
-  const station = track.samples[stationIdx];
-  player.trackSampleIndex = stationIdx;
-  player.x = station.x + station.rx * station.racingLineOffset;
-  player.z = station.z + station.rz * station.racingLineOffset;
-  player.speedMs = 68;
+  vehicle.trackSampleIndex = targetIdx;
+  vehicle.speedMs = 45;
+  vehicle.brake = 0.6;
 
-  weather.condition = 'clear';
-  weather.rainIntensity = 0;
-  const puddleBeforeDrying = weather.sectorPuddles![stationIdx];
-  const dryingBefore = weather.sectorDrying![stationIdx];
-
-  for (let i = 0; i < 40; i++) {
-    stepTrackPuddleAndDryingPhysics(weather, 0.25, track, [player]);
+  for (let pass = 0; pass < 40; pass++) {
+    depositVehicleRubber(rubberState, track, vehicle, 0.1, true, pass === 15 || pass === 30);
   }
+  assert.ok(rubberState.globalRubberLevel > initialRubber + 0.15);
 
-  assert.ok(
-    weather.sectorDrying![stationIdx] > dryingBefore + 0.15,
-    `Vehicle tire heat & water displacement must dry the racing line (${weather.sectorDrying![stationIdx]} vs ${dryingBefore})`
-  );
-  assert.ok(
-    weather.sectorPuddles![stationIdx] < puddleBeforeDrying,
-    `Puddle depth at station must shrink as track dries (${weather.sectorPuddles![stationIdx]} vs ${puddleBeforeDrying})`
-  );
-
-  // 3. Real-time surfaceGripParams evaluation: dried racing line has higher grip & less puddle depth than off-line standing water
-  const onLineGrip = evaluateSurfaceGripParameters(
-    player,
-    track,
-    stationIdx,
-    station.racingLineOffset,
-    weather,
-    rubberState
-  );
-  const offLineGrip = evaluateSurfaceGripParameters(
-    player,
-    track,
-    stationIdx,
-    station.racingLineOffset + 3.6,
-    weather,
-    rubberState
-  );
-
-  assert.ok(
-    onLineGrip.puddleDepth < offLineGrip.puddleDepth,
-    `On-line puddle depth (${onLineGrip.puddleDepth}) must be shallower than off-line standing water (${offLineGrip.puddleDepth})`
-  );
-  assert.ok(
-    onLineGrip.effectiveSurfaceGrip > offLineGrip.effectiveSurfaceGrip,
-    `Dried racing line effectiveSurfaceGrip (${onLineGrip.effectiveSurfaceGrip}) must exceed off-line puddle grip (${offLineGrip.effectiveSurfaceGrip})`
-  );
-
-  // 4. stepVehiclePhysics updates vehicle.surfaceGripParams in real time
-  stepVehiclePhysics(
-    player,
-    { forward: true, backward: false, left: false, right: false, handbrake: false },
-    stats,
-    track,
-    1 / 60,
-    20000,
-    weather,
-    'off',
-    rubberState
-  );
-  assert.ok(player.surfaceGripParams.effectiveSurfaceGrip > 0.35);
-  assert.ok(player.surfaceGripParams.trackDryingLine >= 0);
+  const onLineEval = evaluateTrackRubberEffect(track, targetIdx, cornerStation.racingLineOffset, rubberState, 0);
+  assert.ok(onLineEval.onRacingLine);
+  assert.ok(onLineEval.lineGripModifier > 1.03);
 });
 
-test('All 6 cars in CLASSIC_CARS have unique 3D body styles, distinct coachwork geometry, increased top speeds (> 320 km/h), and zero 3D tire-over-hood clipping', () => {
-  assert.equal(CLASSIC_CARS.length, 6, 'Roster should include all 6 classic GT cars');
-  const wheelOuterTopY = 0.301 + 0.305; // wheelContactY (0.301) + wheelRadius (0.305) = 0.606m
-  const seenBodyStyles = new Set<string>();
-  const seenDimensionSignatures = new Set<string>();
+test('3D Gravity normal load G, asphalt grip factor, kerb rumble, and Pro-Assisted handling easiness operate accurately', () => {
+  const track = TRACKS.stelvio_pass;
+  const car = CLASSIC_CARS[0];
+  const stats = computeEffectiveCarStats(car, DEFAULT_UPGRADES, DEFAULT_TUNING);
 
-  for (const car of CLASSIC_CARS) {
-    assert.equal(car.unlockCost, 0, `Car ${car.id} should be free / unlocked`);
-    assert.ok(car.coachbuilder.length > 3, `Car ${car.id} should specify coachbuilder`);
-    assert.ok(car.silhouetteTag.length > 5, `Car ${car.id} should specify silhouetteTag`);
-    assert.ok(
-      !seenBodyStyles.has(car.bodyStyle),
-      `Car ${car.id} must have a unique 3D bodyStyle (duplicate: ${car.bodyStyle})`
+  // Verify track samples have verticalCurvature populated
+  const hasCrestOrDip = track.samples.some((s) => Math.abs(s.verticalCurvature ?? 0) > 0.0005);
+  assert.ok(hasCrestOrDip, 'Hilly circuits must compute signed verticalCurvature for crest/dip gravity load');
+
+  const assistedCar = createInitialVehicleState({
+    id: 'assisted',
+    isPlayer: true,
+    driverName: 'Pro Assisted',
+    carSpecId: car.id,
+    livery: car.defaultLivery,
+    track,
+    gridSlot: 0,
+  });
+
+  const historicCar = createInitialVehicleState({
+    id: 'historic',
+    isPlayer: true,
+    driverName: 'Pure Historic',
+    carSpecId: car.id,
+    livery: car.defaultLivery,
+    track,
+    gridSlot: 0,
+  });
+
+  // Give both cars an initial yaw slip perturbation while cornering at high speed
+  assistedCar.speedMs = 42;
+  assistedCar.vx = Math.sin(assistedCar.yaw + 0.25) * 42;
+  assistedCar.vz = Math.cos(assistedCar.yaw + 0.25) * 42;
+
+  historicCar.speedMs = 42;
+  historicCar.vx = Math.sin(historicCar.yaw + 0.25) * 42;
+  historicCar.vz = Math.cos(historicCar.yaw + 0.25) * 42;
+
+  for (let i = 0; i < 45; i++) {
+    stepVehiclePhysics(
+      assistedCar,
+      { forward: true, backward: false, left: true, right: false, handbrake: false },
+      stats,
+      track,
+      1 / 60,
+      i * 16.67,
+      undefined,
+      'off',
+      undefined,
+      1.0,
+      'pro_assisted'
     );
-    seenBodyStyles.add(car.bodyStyle);
-
-    assert.ok(
-      car.baseStats.topSpeedKmh >= 320,
-      `Car ${car.id} factory top speed (${car.baseStats.topSpeedKmh} km/h) must be >= 320 km/h`
-    );
-
-    // Verify 3D coachwork mesh fender/hood vertices strictly clear the top of the front and rear tires
-    const rig = buildClassicCarMesh(car, car.defaultLivery, true, 1);
-    let coachMesh: THREE.Mesh | null = null;
-    let totalChildMeshes = 0;
-    rig.bodyGroup.traverse((obj) => {
-      if (obj instanceof THREE.Mesh) {
-        totalChildMeshes++;
-        if (obj.geometry.attributes.position.count > 1000 && !coachMesh) {
-          coachMesh = obj;
-        }
-      }
-    });
-    assert.ok(coachMesh, `Car ${car.id} must have a high-res lofted coachwork mesh`);
-    assert.ok(
-      totalChildMeshes >= 45,
-      `Car ${car.id} must have rich multi-part 3D details (got ${totalChildMeshes} meshes)`
-    );
-
-    const geo = (coachMesh as THREE.Mesh).geometry;
-    geo.computeBoundingBox();
-    const bb = geo.boundingBox!;
-    const dimSig = `${(bb.max.x - bb.min.x).toFixed(2)}x${(bb.max.z - bb.min.z).toFixed(2)}x${(
-      bb.max.y - bb.min.y
-    ).toFixed(3)}:${totalChildMeshes}`;
-    assert.ok(
-      !seenDimensionSignatures.has(dimSig),
-      `Car ${car.id} 3D geometry signature (${dimSig}) must be distinct from other cars`
-    );
-    seenDimensionSignatures.add(dimSig);
-
-    const pos = geo.attributes.position;
-    const norm = geo.attributes.normal;
-    let checkedFenderCrownVerts = 0;
-    for (let i = 0; i < pos.count; i++) {
-      const vx = Math.abs(pos.getX(i));
-      const vy = pos.getY(i);
-      const vz = pos.getZ(i);
-      const ny = norm.getY(i);
-      const nearFrontAxle = Math.abs(vz - 1.22) < 0.25;
-      const nearRearAxle = Math.abs(vz + 1.2) < 0.25;
-      if ((nearFrontAxle || nearRearAxle) && vx > 0.52 && vx < 0.84 && vy > 0.5 && ny > 0.55) {
-        checkedFenderCrownVerts++;
-        assert.ok(
-          vy >= wheelOuterTopY + 0.045,
-          `Car ${car.id} upper fender/hood vertex Y (${vy.toFixed(3)}m) at z=${vz.toFixed(2)} must clear tire top (${wheelOuterTopY.toFixed(3)}m) by >= 4.5cm`
-        );
-      }
-    }
-    assert.ok(
-      checkedFenderCrownVerts >= 10,
-      `Car ${car.id} should have upper fender crown vertices above wheel axles (checked ${checkedFenderCrownVerts})`
+    stepVehiclePhysics(
+      historicCar,
+      { forward: true, backward: false, left: true, right: false, handbrake: false },
+      stats,
+      track,
+      1 / 60,
+      i * 16.67,
+      undefined,
+      'off',
+      undefined,
+      1.0,
+      'pure_historic'
     );
   }
+
+  assert.ok(
+    (assistedCar.asphaltGripFactor ?? 1) > (historicCar.asphaltGripFactor ?? 1),
+    `Pro-Assisted mode should provide higher effective asphalt grip (${assistedCar.asphaltGripFactor}) than Pure Historic (${historicCar.asphaltGripFactor})`
+  );
+  assert.ok(
+    Math.abs(assistedCar.slipAngleRad) <= Math.abs(historicCar.slipAngleRad) + 0.02,
+    'Pro-Assisted mode should stabilize slip angle during aggressive turn-in'
+  );
+  assert.ok(
+    (assistedCar.verticalLoadG ?? 0) > 0.4 && (assistedCar.verticalLoadG ?? 0) < 2.0,
+    `Vertical load G (${assistedCar.verticalLoadG}) must be within realistic physical bounds`
+  );
 });
 

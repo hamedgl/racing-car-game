@@ -4,6 +4,7 @@ import {
   ChampionshipLevelSpec,
   ControlInput,
   CornerTireState,
+  HandlingMode,
   RemoteRacerTelemetry,
   TireCompound,
   TrackSpec,
@@ -17,13 +18,14 @@ interface RacingHudProps {
   track: TrackSpec;
   activeLevel: ChampionshipLevelSpec;
   cameraMode: CameraMode;
+  handlingMode: HandlingMode;
   isMuted: boolean;
   nextPitCompound: TireCompound;
   pitRequestArmed: boolean;
   remoteRacers: RemoteRacerTelemetry[];
   touchInputRef: React.MutableRefObject<ControlInput>;
   onCycleCamera: () => void;
-  onCycleWeather?: () => void;
+  onToggleHandlingMode: () => void;
   onCycleNextPitCompound: () => void;
   onTogglePitRequest: () => void;
   onToggleMute: () => void;
@@ -91,13 +93,14 @@ export const RacingHud: React.FC<RacingHudProps> = ({
   track,
   activeLevel,
   cameraMode,
+  handlingMode,
   isMuted,
   nextPitCompound,
   pitRequestArmed,
   remoteRacers,
   touchInputRef,
   onCycleCamera,
-  onCycleWeather,
+  onToggleHandlingMode,
   onCycleNextPitCompound,
   onTogglePitRequest,
   onToggleMute,
@@ -191,10 +194,6 @@ export const RacingHud: React.FC<RacingHudProps> = ({
 
   const weather = hud.weather;
   const tires = hud.tires;
-  const surfaceParams = hud.surfaceGripParams;
-  const puddlePct = Math.round((weather.puddleLevel ?? 0) * 100);
-  const dryingLinePct = Math.round((weather.dryingLineIntensity ?? 1) * 100);
-  const surfaceGripPct = Math.round((surfaceParams?.effectiveSurfaceGrip ?? 1) * 100);
   const activeCompoundMeta = COMPOUND_BADGE[tires.compound];
   const nextCompoundMeta = COMPOUND_BADGE[nextPitCompound];
   const avgTreadPct = Math.round(tires.avgTreadLife * 100);
@@ -306,32 +305,40 @@ export const RacingHud: React.FC<RacingHudProps> = ({
             ))}
           </div>
 
-          {/* Subtle Integrated Track Groove, Puddle / Drying Line & Tire Status Line */}
+          {/* Subtle Integrated Track Groove, Gravity Load G & Asphalt Status Line */}
           <div className="flex flex-wrap items-center gap-1.5 pt-0.5 text-[10px] font-semibold tracking-wider uppercase whitespace-nowrap">
             <span className="text-[#f59e0b]">LVL {activeLevel.level}</span>
             <span className="text-[#475569]">·</span>
-            <span className="text-[#cbd5e1]">⛰️ +{track.elevationGainM}M</span>
+            <span
+              className={
+                (hud.verticalLoadG ?? 1) > 1.15
+                  ? 'text-[#38bdf8]'
+                  : (hud.verticalLoadG ?? 1) < 0.88
+                  ? 'text-[#f59e0b]'
+                  : 'text-[#cbd5e1]'
+              }
+            >
+              {(hud.verticalLoadG ?? 1.0).toFixed(2)}G LOAD
+            </span>
             <span className="text-[#475569]">·</span>
             <span className="text-[#94a3b8]">
-              {weather.wetness > 0.35
-                ? `🌧️ WET · PUDDLES ${puddlePct}% · DRY LINE ${dryingLinePct}%`
-                : weather.activeType === 'overcast'
-                ? '☁️ OVERCAST'
-                : '☀️ DRY LINE 100%'}
+              {weather.wetness > 0.4 ? '🌧️ WET' : weather.activeType === 'overcast' ? '☁️ DRY' : '☀️ DRY'}
             </span>
             <span className="text-[#475569]">·</span>
             {hud.isOffTrack ? (
               <span className="text-[#ef4444]">OFF-TRACK VERGE</span>
-            ) : hud.isAquaplaning ? (
-              <span className="text-[#38bdf8]">💧 PUDDLE HYDROPLANE</span>
+            ) : hud.onKerb ? (
+              <span className="text-[#f59e0b]">APEX KERB RUMBLE</span>
             ) : hud.onMarbles ? (
               <span className="text-[#f59e0b]">TIRE MARBLES</span>
             ) : hud.onRacingLine ? (
               <span className="text-[#22c55e]">
-                {weather.wetness > 0.2 ? 'DRIED GROOVE' : 'RUBBERED GROOVE'}
+                RUBBER GROOVE ({Math.round((hud.asphaltGripFactor ?? 1.08) * 100)}%)
               </span>
             ) : (
-              <span className="text-[#cbd5e1]">RUBBER {hud.trackRubberPercent}%</span>
+              <span className="text-[#cbd5e1]">
+                TARMAC {Math.round((hud.asphaltGripFactor ?? 1.0) * 100)}%
+              </span>
             )}
             {hud.isBoosting && (
               <>
@@ -389,29 +396,31 @@ export const RacingHud: React.FC<RacingHudProps> = ({
           )}
         </div>
 
-        {/* CLUSTER 2: Top-Right Camera Switcher, Weather Switcher, Utility Controls & Circuit Radar */}
+        {/* CLUSTER 2: Top-Right Camera Switcher, Utility Controls & Circuit Radar */}
         <div className="flex flex-col items-end gap-1.5 md:gap-2 shrink-0">
           <div className="flex items-center gap-1 md:gap-1.5 pointer-events-auto">
-            {/* Quick Weather Cycle Button */}
-            {onCycleWeather && (
-              <button
-                type="button"
-                tabIndex={-1}
-                aria-label="Cycle Weather Condition"
-                title={`Weather: ${weather.condition.toUpperCase()} (${weather.activeType.toUpperCase()})`}
-                onClick={(e) => {
-                  e.currentTarget.blur();
-                  onCycleWeather();
-                }}
-                className="h-8 md:h-9 px-2 md:px-2.5 flex items-center gap-1 rounded border border-[#f5f2eb]/20 bg-[#0b0f17]/90 hover:bg-[#1e293b] text-[#f5f2eb] transition-colors cursor-pointer"
-              >
-                <span className="text-[10px] md:text-[11px] font-mono-tabular font-bold tracking-wider uppercase text-[#7dd3fc]">
-                  {weather.condition === 'dynamic'
-                    ? `DYN:${weather.activeType.toUpperCase()}`
-                    : weather.condition.toUpperCase()}
-                </span>
-              </button>
-            )}
+            {/* Handling Assistance Mode Toggle Button */}
+            <button
+              type="button"
+              tabIndex={-1}
+              aria-label="Toggle Handling Mode"
+              title={`Toggle Handling Assist [H]: ${
+                handlingMode === 'pro_assisted' ? 'Pro Assisted (Easier Cornering & Counter-Steer)' : 'Pure Historic 1967'
+              }`}
+              onClick={(e) => {
+                e.currentTarget.blur();
+                onToggleHandlingMode();
+              }}
+              className={`h-8 md:h-9 px-2 md:px-2.5 flex items-center gap-1.5 rounded border transition-colors cursor-pointer ${
+                handlingMode === 'pro_assisted'
+                  ? 'border-[#22c55e]/50 bg-[#0b0f17]/90 hover:bg-[#14532d]/50 text-[#4ade80]'
+                  : 'border-[#f59e0b]/50 bg-[#0b0f17]/90 hover:bg-[#78350f]/50 text-[#fcd34d]'
+              }`}
+            >
+              <span className="text-[10px] md:text-[11px] font-mono-tabular font-bold tracking-wider uppercase">
+                {handlingMode === 'pro_assisted' ? 'ASSIST: PRO' : 'PURE 67'}
+              </span>
+            </button>
 
             {/* Multi-Angle Camera Switcher Button */}
             <button
@@ -544,10 +553,12 @@ export const RacingHud: React.FC<RacingHudProps> = ({
 
       {/* BOTTOM ROW: Tire & Pit Strategy Cluster (Desktop Left), Mobile Controls, & Veglia Tachometer (Desktop Right) */}
       <div className="flex flex-col md:flex-row items-stretch md:items-end justify-between gap-2 w-full">
-        {/* DESKTOP LEFT: 4-Corner Dynamic Tire Telemetry, Surface Puddle/Drying & Pit Stop Strategy Module */}
+        {/* DESKTOP: 4-Corner Dynamic Tire Telemetry & Pit Stop Strategy Module (Docks right in Cockpit mode so 3D wheel & gauges are 100% clear) */}
         <div
           data-testid="tire-telemetry-panel"
-          className="hidden md:flex flex-col gap-2 px-3.5 py-3 rounded border border-[#f5f2eb]/15 w-72 pointer-events-auto"
+          className={`hidden md:flex flex-col gap-2 px-3.5 py-3 rounded border border-[#f5f2eb]/15 w-72 pointer-events-auto ${
+            cameraMode === 'cockpit' ? 'ml-auto' : ''
+          }`}
           style={{ backgroundColor: 'rgba(11, 15, 23, 0.90)' }}
         >
           <div className="flex items-center justify-between border-b border-[#f5f2eb]/10 pb-1.5">
@@ -563,24 +574,12 @@ export const RacingHud: React.FC<RacingHudProps> = ({
                 {activeCompoundMeta.label}
               </span>
               <span className="text-[11px] font-mono-tabular font-semibold text-[#cbd5e1]">
-                GRIP {surfaceGripPct}%
+                GRIP {Math.round(tires.gripMultiplier * 100)}%
               </span>
             </div>
             <span className="text-[10px] font-mono-tabular text-[#94a3b8]">
               PITS: {tires.pitStopsCompleted}
             </span>
-          </div>
-
-          {/* Dynamic Puddle & Track Drying Line Telemetry Strip */}
-          <div
-            data-testid="surface-puddle-drying-telemetry"
-            className="flex items-center justify-between text-[9px] font-mono-tabular px-2 py-1 rounded bg-[#090d16] border border-[#f5f2eb]/10"
-          >
-            <span className="text-[#7dd3fc]">PUDDLE: {puddlePct}%</span>
-            <span className="text-[#475569]">·</span>
-            <span className="text-[#4ade80]">DRY LINE: {dryingLinePct}%</span>
-            <span className="text-[#475569]">·</span>
-            <span className="text-[#f59e0b]">SURF: {surfaceGripPct}%</span>
           </div>
 
           {/* 4-Corner Tire Grid (FL, FR, RL, RR) */}
@@ -797,60 +796,78 @@ export const RacingHud: React.FC<RacingHudProps> = ({
           </div>
         </div>
 
-        {/* Desktop Veglia Borletti PNG Tachometer, Gear & Speedometer Instrument Cluster */}
-        <div className="hidden md:flex ml-auto items-end gap-3">
+        {/* Desktop Instrument Cluster: Full Veglia Dial in External Views, Sleek Chronometer Telemetry in 3D Cockpit View */}
+        <div
+          className={`hidden md:flex items-end gap-3 ${
+            cameraMode === 'cockpit' ? '' : 'ml-auto'
+          }`}
+        >
           <div
+            data-testid="speedometer-cluster"
             className="flex items-center gap-4 px-4 py-3 rounded border border-[#f5f2eb]/15"
             style={{ backgroundColor: 'rgba(11, 15, 23, 0.90)' }}
           >
-            {/* Authentic Veglia Borletti PNG Instrument Dial with Animated Needle Overlay */}
-            <div className="relative w-28 h-28 shrink-0">
-              <img
-                src={tachDialPng}
-                alt="Veglia Borletti Tachometer"
-                className="w-full h-full object-contain select-none pointer-events-none"
-              />
-              <svg viewBox="0 0 110 110" className="absolute inset-0 w-full h-full">
-                <text
-                  x="55"
-                  y="78"
-                  fill={isRedline ? '#ef4444' : '#f59e0b'}
-                  fontSize="16"
-                  fontWeight="bold"
-                  textAnchor="middle"
-                  fontFamily="monospace"
-                >
-                  G{hud.gear}
-                </text>
-                {hud.handbrake && (
-                  <text x="55" y="91" fill="#ef4444" fontSize="7.5" fontWeight="bold" textAnchor="middle">
-                    BRAKE
+            {cameraMode !== 'cockpit' && (
+              <div className="relative w-28 h-28 shrink-0">
+                <img
+                  src={tachDialPng}
+                  alt="Veglia Borletti Tachometer"
+                  className="w-full h-full object-contain select-none pointer-events-none"
+                />
+                <svg viewBox="0 0 110 110" className="absolute inset-0 w-full h-full">
+                  <text
+                    x="55"
+                    y="78"
+                    fill={isRedline ? '#ef4444' : '#f59e0b'}
+                    fontSize="16"
+                    fontWeight="bold"
+                    textAnchor="middle"
+                    fontFamily="monospace"
+                  >
+                    G{hud.gear}
                   </text>
-                )}
-                <g transform={`rotate(${needleDeg.toFixed(1)} 55 55)`}>
-                  <line
-                    x1="55"
-                    y1="62"
-                    x2="55"
-                    y2="16"
-                    stroke="#f59e0b"
-                    strokeWidth="2.6"
-                    strokeLinecap="round"
-                  />
-                  <circle cx="55" cy="55" r="5.5" fill="#e2e8f0" stroke="#0f172a" strokeWidth="1.5" />
-                </g>
-              </svg>
-            </div>
-
-            <div className="flex flex-col items-end min-w-[118px]">
-              <div className="text-[10px] font-semibold tracking-widest uppercase text-[#94a3b8]">
-                SPEED KM/H
+                  {hud.handbrake && (
+                    <text x="55" y="91" fill="#ef4444" fontSize="7.5" fontWeight="bold" textAnchor="middle">
+                      BRAKE
+                    </text>
+                  )}
+                  <g transform={`rotate(${needleDeg.toFixed(1)} 55 55)`}>
+                    <line
+                      x1="55"
+                      y1="62"
+                      x2="55"
+                      y2="16"
+                      stroke="#f59e0b"
+                      strokeWidth="2.6"
+                      strokeLinecap="round"
+                    />
+                    <circle cx="55" cy="55" r="5.5" fill="#e2e8f0" stroke="#0f172a" strokeWidth="1.5" />
+                  </g>
+                </svg>
               </div>
-              <div className="font-display font-extrabold text-4xl text-[#f5f2eb] font-mono-tabular leading-none hud-stroke">
+            )}
+
+            <div className="flex flex-col items-end min-w-[132px]">
+              <div className="flex items-center justify-between w-full gap-2">
+                <span
+                  className={`px-1.5 py-0.5 rounded text-xs font-mono-tabular font-bold border ${
+                    isRedline
+                      ? 'border-[#ef4444] bg-[#ef4444]/20 text-[#fca5a5] animate-pulse'
+                      : 'border-[#f59e0b]/40 bg-[#f59e0b]/15 text-[#f59e0b]'
+                  }`}
+                >
+                  GEAR {hud.gear}
+                </span>
+                <span className="text-[10px] font-semibold tracking-widest uppercase text-[#94a3b8]">
+                  KM/H
+                </span>
+              </div>
+              <div className="font-display font-extrabold text-4xl text-[#f5f2eb] font-mono-tabular leading-none hud-stroke mt-1">
                 {Math.round(hud.speedKmh)}
               </div>
-              <div className="text-xs font-mono-tabular text-[#94a3b8] mt-1">
-                {Math.round(hud.rpm)} RPM
+              <div className="flex items-center justify-between w-full text-xs font-mono-tabular text-[#94a3b8] mt-1">
+                <span>{(hud.verticalLoadG ?? 1.0).toFixed(2)}G</span>
+                <span>{Math.round(hud.rpm)} RPM</span>
               </div>
 
               {/* Nitro Overboost Bar */}

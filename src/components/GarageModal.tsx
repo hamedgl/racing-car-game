@@ -4,7 +4,7 @@ import {
   CarUpgrades,
   ClassicCarSpec,
   EffectiveCarStats,
-  GarageCameraView,
+  HandlingMode,
   HandlingTuning,
   StripeStyle,
   WheelFinish,
@@ -20,18 +20,18 @@ import {
 interface GarageModalProps {
   selectedCar: ClassicCarSpec;
   livery: CarLivery;
+  liveryMap?: Record<string, CarLivery>;
   upgrades: CarUpgrades;
   tuning: HandlingTuning;
+  handlingMode?: HandlingMode;
   effectiveStats: EffectiveCarStats;
   credits: number;
   activePresetKey: string;
-  garageCameraView: GarageCameraView;
-  onSelectGarageCameraView: (view: GarageCameraView) => void;
   onSelectCar: (car: ClassicCarSpec) => void;
   onUpdateLivery: (livery: CarLivery) => void;
   onBuyUpgrade: (system: keyof CarUpgrades) => void;
-  onMaxAllUpgrades?: () => void;
   onUpdateTuning: (tuning: HandlingTuning, presetKey?: string) => void;
+  onToggleHandlingMode?: () => void;
   onClose: () => void;
 }
 
@@ -40,18 +40,18 @@ type GarageTab = 'cars' | 'livery' | 'upgrades' | 'tuning';
 export const GarageModal: React.FC<GarageModalProps> = ({
   selectedCar,
   livery,
+  liveryMap,
   upgrades,
   tuning,
+  handlingMode = 'pro_assisted',
   effectiveStats,
   credits,
   activePresetKey,
-  garageCameraView,
-  onSelectGarageCameraView,
   onSelectCar,
   onUpdateLivery,
   onBuyUpgrade,
-  onMaxAllUpgrades,
   onUpdateTuning,
+  onToggleHandlingMode,
   onClose,
 }) => {
   const [tab, setTab] = useState<GarageTab>('cars');
@@ -66,7 +66,7 @@ export const GarageModal: React.FC<GarageModalProps> = ({
       key: 'engineLevel',
       title: 'Weber Carburetors & Camshafts',
       subtitle: 'Engine Power Stage',
-      effect: '+7.5% Horsepower & Higher Top Velocity per stage',
+      effect: '+6.5% Horsepower & Higher Top Velocity per stage',
     },
     {
       key: 'transmissionLevel',
@@ -78,7 +78,7 @@ export const GarageModal: React.FC<GarageModalProps> = ({
       key: 'tiresLevel',
       title: 'Dunlop Vintage Racing Compound',
       subtitle: 'Mechanical Grip Stage',
-      effect: '+6.0% Cornering Lateral G & Braking Traction',
+      effect: '+5.5% Cornering Lateral G & Braking Traction',
     },
     {
       key: 'chassisWeightLevel',
@@ -95,7 +95,7 @@ export const GarageModal: React.FC<GarageModalProps> = ({
       className="fixed inset-y-0 left-0 z-30 w-full max-w-xl p-4 md:p-6 flex flex-col justify-between pointer-events-auto border-r border-[#f5f2eb]/15 overflow-y-auto"
       style={{ backgroundColor: 'rgba(13, 12, 11, 0.95)' }}
     >
-      <div className="space-y-4">
+      <div className="space-y-5">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-[#f5f2eb]/15 pb-3.5">
           <div>
@@ -103,9 +103,10 @@ export const GarageModal: React.FC<GarageModalProps> = ({
               Scuderia Paddock & Engineering
             </h2>
             <p className="text-xs text-[#a39c8e]">
-              {selectedCar.name} · {selectedCar.coachbuilder} ·{' '}
-              <span className="font-mono-tabular text-[#4ade80] font-semibold">
-                ∞ UNLIMITED CR ({credits.toLocaleString()} CR)
+              {selectedCar.name} · Balance:{' '}
+              <span className="text-[#f59e0b] font-semibold">{effectiveStats.balanceLabel}</span> ·{' '}
+              <span className="font-mono-tabular text-[#f59e0b] font-semibold">
+                {credits.toLocaleString()} CR
               </span>
             </p>
           </div>
@@ -116,43 +117,6 @@ export const GarageModal: React.FC<GarageModalProps> = ({
           >
             Done
           </button>
-        </div>
-
-        {/* 3D Paddock Inspection Camera Angle Bar */}
-        <div className="p-2.5 rounded bg-[#181614] border border-[#f5f2eb]/10 space-y-1.5">
-          <div className="flex items-center justify-between px-1">
-            <span className="text-[10px] uppercase tracking-wider font-semibold text-[#a39c8e]">
-              3D Paddock Inspection Camera
-            </span>
-            <span className="text-[10px] font-mono-tabular text-[#f59e0b]">
-              {selectedCar.silhouetteTag}
-            </span>
-          </div>
-          <div className="grid grid-cols-5 gap-1.5">
-            {(
-              [
-                { id: 'orbit', label: 'Orbit 360°' },
-                { id: 'front_quarter', label: 'Front 3/4' },
-                { id: 'side_profile', label: 'Side View' },
-                { id: 'rear_engine', label: 'Rear Bay' },
-                { id: 'cockpit_closeup', label: 'Cockpit' },
-              ] as Array<{ id: GarageCameraView; label: string }>
-            ).map((cam) => (
-              <button
-                key={cam.id}
-                type="button"
-                data-testid={`garage-cam-${cam.id}`}
-                onClick={() => onSelectGarageCameraView(cam.id)}
-                className={`py-1.5 px-1.5 rounded text-[11px] font-semibold transition-colors cursor-pointer whitespace-nowrap text-center ${
-                  garageCameraView === cam.id
-                    ? 'bg-[#262320] text-[#f59e0b] border border-[#f59e0b]/60'
-                    : 'bg-[#12100e] text-[#cfc9bc] hover:text-[#f5f2eb] border border-[#f5f2eb]/5'
-                }`}
-              >
-                {cam.label}
-              </button>
-            ))}
-          </div>
         </div>
 
         {/* Live Telemetry Summary Strip (Updates immediately on any car/upgrade/tuning change) */}
@@ -231,11 +195,18 @@ export const GarageModal: React.FC<GarageModalProps> = ({
           <div className="space-y-2.5">
             {CLASSIC_CARS.map((car) => {
               const isSelected = car.id === selectedCar.id;
+              const carLivery = liveryMap?.[car.id] ?? car.defaultLivery;
+              const topSpeedPct = Math.min(100, Math.round((car.baseStats.topSpeedKmh / 330) * 100));
+              const gripPct = Math.min(100, Math.round((car.baseStats.lateralGripG / 1.38) * 100));
+              const accelPct = Math.min(
+                100,
+                Math.round(((7.0 - car.baseStats.accel0to100) / 3.2) * 100)
+              );
+
               return (
                 <button
                   key={car.id}
                   type="button"
-                  data-testid={`select-car-${car.id}`}
                   onClick={() => onSelectCar(car)}
                   className={`w-full text-left p-3.5 rounded border transition-colors cursor-pointer ${
                     isSelected
@@ -243,21 +214,89 @@ export const GarageModal: React.FC<GarageModalProps> = ({
                       : 'bg-[#161412] border-[#f5f2eb]/10 hover:border-[#f5f2eb]/30'
                   }`}
                 >
-                  <div className="flex items-center justify-between">
-                    <span className="font-display font-bold text-base text-[#f5f2eb]">
-                      {car.name}
-                    </span>
-                    <span className="text-xs font-mono-tabular text-[#f59e0b]">
-                      {car.baseStats.powerHp} HP · {car.baseStats.weightKg} KG
-                    </span>
+                  <div className="flex items-start gap-3.5">
+                    {/* Livery & FIA Roundel Badge Swatch Tile */}
+                    <div
+                      className="w-12 h-14 rounded border border-white/20 shrink-0 relative overflow-hidden flex items-center justify-center shadow-inner"
+                      style={{ backgroundColor: carLivery.bodyColor }}
+                    >
+                      {carLivery.stripeStyle !== 'none' && (
+                        <div
+                          className="absolute inset-y-0 w-2.5 opacity-90"
+                          style={{
+                            backgroundColor: carLivery.stripeColor,
+                            left: carLivery.stripeStyle === 'offset_lemans' ? '22%' : '39%',
+                          }}
+                        />
+                      )}
+                      <div className="relative z-10 w-8 h-8 rounded-full bg-[#f8fafc] border border-black/80 flex items-center justify-center font-display font-bold text-xs text-[#09090b] font-mono-tabular shadow">
+                        {carLivery.number}
+                      </div>
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-display font-bold text-base text-[#f5f2eb] truncate">
+                          {car.name}
+                        </span>
+                        <span className="text-xs font-mono-tabular text-[#f59e0b] shrink-0">
+                          {car.baseStats.powerHp} HP · {car.baseStats.weightKg} KG
+                        </span>
+                      </div>
+                      <div className="text-xs text-[#a39c8e] mt-0.5">
+                        {car.origin} · {car.displacement} · {car.baseStats.topSpeedKmh} KM/H Factory Top
+                      </div>
+                      <p className="text-xs text-[#cfc9bc] mt-1.5 leading-relaxed">
+                        {car.description}
+                      </p>
+
+                      {/* 3-Metric Factory Spec Comparison Strip */}
+                      <div className="grid grid-cols-3 gap-2.5 mt-2.5 pt-2 border-t border-[#f5f2eb]/10">
+                        <div>
+                          <div className="flex justify-between text-[10px] text-[#a39c8e]">
+                            <span>VELOCITY</span>
+                            <span className="font-mono-tabular text-[#f5f2eb]">
+                              {car.baseStats.topSpeedKmh}
+                            </span>
+                          </div>
+                          <div className="h-1 bg-[#262320] rounded-xs mt-1 overflow-hidden">
+                            <div
+                              className="h-full bg-[#f59e0b]"
+                              style={{ width: `${topSpeedPct}%` }}
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <div className="flex justify-between text-[10px] text-[#a39c8e]">
+                            <span>0-100 KM/H</span>
+                            <span className="font-mono-tabular text-[#f5f2eb]">
+                              {car.baseStats.accel0to100}s
+                            </span>
+                          </div>
+                          <div className="h-1 bg-[#262320] rounded-xs mt-1 overflow-hidden">
+                            <div
+                              className="h-full bg-[#10b981]"
+                              style={{ width: `${accelPct}%` }}
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <div className="flex justify-between text-[10px] text-[#a39c8e]">
+                            <span>CORNER G</span>
+                            <span className="font-mono-tabular text-[#f5f2eb]">
+                              {car.baseStats.lateralGripG.toFixed(2)}G
+                            </span>
+                          </div>
+                          <div className="h-1 bg-[#262320] rounded-xs mt-1 overflow-hidden">
+                            <div
+                              className="h-full bg-[#38bdf8]"
+                              style={{ width: `${gripPct}%` }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                  <div className="text-xs text-[#f59e0b]/90 font-medium mt-0.5">
-                    {car.coachbuilder} · {car.silhouetteTag}
-                  </div>
-                  <div className="text-xs text-[#a39c8e] mt-0.5">
-                    {car.origin} · {car.displacement} · {car.baseStats.topSpeedKmh} KM/H Factory Top
-                  </div>
-                  <p className="text-xs text-[#cfc9bc] mt-1.5 leading-relaxed">{car.description}</p>
                 </button>
               );
             })}
@@ -408,20 +447,6 @@ export const GarageModal: React.FC<GarageModalProps> = ({
         {/* TAB 3: PERFORMANCE UPGRADES */}
         {tab === 'upgrades' && (
           <div className="space-y-3">
-            {onMaxAllUpgrades && (
-              <div className="flex items-center justify-between p-2.5 rounded bg-[#182218] border border-[#22c55e]/30">
-                <span className="text-xs font-semibold text-[#4ade80]">
-                  ∞ Unlimited CR Treasury Active
-                </span>
-                <button
-                  type="button"
-                  onClick={onMaxAllUpgrades}
-                  className="px-3 py-1.5 rounded bg-[#22c55e] hover:bg-[#4ade80] text-[#09090b] text-xs font-display font-bold uppercase tracking-wider cursor-pointer transition-colors"
-                >
-                  Max All Stages (∞ CR)
-                </button>
-              </div>
-            )}
             {upgradeSystems.map((sys) => {
               const currentLvl = upgrades[sys.key];
               const cost = getUpgradeCost(currentLvl);
@@ -475,6 +500,38 @@ export const GarageModal: React.FC<GarageModalProps> = ({
         {/* TAB 4: PRO HANDLING TUNING */}
         {tab === 'tuning' && (
           <div className="space-y-4">
+            {/* Handling Assistance Mode Selector */}
+            {onToggleHandlingMode && (
+              <div className="p-3 rounded bg-[#161412] border border-[#f5f2eb]/12 flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-bold text-[#f5f2eb]">
+                    Steering & Stability Feel:{' '}
+                    <span
+                      className={
+                        handlingMode === 'pro_assisted' ? 'text-[#10b981]' : 'text-[#f59e0b]'
+                      }
+                    >
+                      {handlingMode === 'pro_assisted'
+                        ? 'PRO ASSISTED (EASY & INTUITIVE)'
+                        : 'PURE 1967 (RAW HISTORIC)'}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-[#a39c8e] mt-0.5">
+                    {handlingMode === 'pro_assisted'
+                      ? 'Active caster counter-steer catch, apex turn-in help, and cornering brake modulation.'
+                      : 'Unfiltered 1967 bias-ply slip angles and raw mechanical weight transfer.'}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={onToggleHandlingMode}
+                  className="px-3 py-1.5 rounded bg-[#262320] hover:bg-[#3f3b36] border border-[#f5f2eb]/20 text-xs font-mono-tabular font-semibold text-[#f5f2eb] shrink-0 cursor-pointer"
+                >
+                  Switch Mode [H]
+                </button>
+              </div>
+            )}
+
             {/* Quick Engineer Presets */}
             <div>
               <div className="text-xs font-semibold text-[#cfc9bc] mb-1.5">

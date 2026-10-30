@@ -85,16 +85,6 @@ export interface HandlingTuning {
   diffLockAccel: number;       // 15 .. 85 % (default 45)
 }
 
-export type CarBodyStyle =
-  | 'italian_gt'
-  | 'british_coupe'
-  | 'stuttgart_911'
-  | 'detroit_proto'
-  | 'daytona_kammtail'
-  | 'stradale_proto';
-
-export type GarageCameraView = 'orbit' | 'front_quarter' | 'side_profile' | 'rear_engine' | 'cockpit_closeup';
-
 export interface ClassicCarSpec {
   id: string;
   name: string;
@@ -102,8 +92,6 @@ export interface ClassicCarSpec {
   origin: string;
   engineConfig: 'V12' | 'I6' | 'F6' | 'V8';
   displacement: string;
-  coachbuilder: string;
-  silhouetteTag: string;
   description: string;
   unlockCost: number;
   baseStats: {
@@ -116,7 +104,7 @@ export interface ClassicCarSpec {
     dragCoeff: number;
     wheelbaseM: number;
   };
-  bodyStyle: CarBodyStyle;
+  bodyStyle: 'italian_gt' | 'british_coupe' | 'stuttgart_911' | 'detroit_proto';
   defaultLivery: CarLivery;
 }
 
@@ -140,6 +128,8 @@ export interface EffectiveCarStats {
   performanceIndex: number; // 400 .. 999 historic class rating
 }
 
+export type HandlingMode = 'pro_assisted' | 'pure_historic';
+
 export interface TrackPointSample {
   index: number;
   s: number; // normalized 0..1 along lap
@@ -155,6 +145,7 @@ export interface TrackPointSample {
   width: number;
   bankingRad: number;
   curvature: number; // signed curvature for AI braking & apex offset
+  verticalCurvature?: number; // signed vertical crest/compression curvature (d^2y/ds^2)
   racingLineOffset: number; // optimal lateral offset in meters (-left, +right)
   cornerLoadIntensity: number; // 0..1 braking + cornering rubber deposition weight
 }
@@ -212,6 +203,7 @@ export interface VehiclePhysicsState {
   yaw: number; // heading in radians (0 = +Z, or atan2(vx, vz))
   vx: number;
   vz: number;
+  vy: number; // vertical suspension/gravity velocity
   speedMs: number;
   lateralSpeedMs: number;
   angularVelocity: number;
@@ -222,10 +214,15 @@ export interface VehiclePhysicsState {
   handbrake: boolean;
   gear: number; // 1..5
   rpm: number;  // 1000..8500
-  // Suspension & Feel
+  // Suspension, Gravity Load & Asphalt Feel
   pitchRad: number;
   rollRad: number;
   slipAngleRad: number;
+  suspensionOffsetM: number; // vertical heave compression/extension (-0.06m .. +0.06m)
+  verticalLoadG: number;     // normal load factor on asphalt (0.35G crest .. 1.85G dip)
+  asphaltGripFactor: number; // combined effective asphalt friction multiplier
+  onKerb: boolean;           // true when riding serrated apex rumble kerbs
+  kerbVibration: number;     // high-frequency serrated kerb harmonic
   isDrifting: boolean;
   isOffTrack: boolean;
   isDrafting: boolean;
@@ -260,16 +257,6 @@ export interface VehiclePhysicsState {
   onMarbles: boolean;
   lineGripModifier: number; // >1.0 on rubbered line, <1.0 on marbles
   frontBrakeGlow: number; // 0.0 .. 1.0 glowing rotor temperature
-  // Real-time Dynamic Puddle & Track Drying Surface Grip Parameters
-  surfaceGripParams: TireGripSurfaceParams;
-}
-
-export interface TireGripSurfaceParams {
-  surfaceWetness: number;        // 0.0 (bone dry) .. 1.0 (saturated asphalt)
-  puddleDepth: number;           // 0.0 (no standing water) .. 1.0 (deep puddle at vehicle position)
-  trackDryingLine: number;       // 0.0 (wet groove) .. 1.0 (dried racing line from evaporation & tires)
-  hydroplaneFactor: number;      // 0.0 (full tire contact) .. 1.0 (aquaplaning lift on standing water)
-  effectiveSurfaceGrip: number;  // real-time combined tire-to-surface grip coefficient
 }
 
 export type WeatherCondition = 'clear' | 'overcast' | 'rain' | 'storm' | 'dynamic';
@@ -277,13 +264,9 @@ export type WeatherCondition = 'clear' | 'overcast' | 'rain' | 'storm' | 'dynami
 export interface WeatherState {
   condition: WeatherCondition;
   activeType: 'clear' | 'overcast' | 'rain' | 'storm';
-  wetness: number;               // 0.0 (bone dry) to 1.0 (waterlogged asphalt)
-  rainIntensity: number;         // 0.0 to 1.0 current precipitation intensity
-  puddleLevel: number;           // 0.0 (dry) to 1.0 (deep standing puddles in low drainage zones)
-  dryingLineIntensity: number;   // 0.0 (uniformly wet) to 1.0 (dry racing groove formed by tires & wind)
-  sectorPuddles?: Float32Array;  // per-sample localized standing puddle depth (0..1)
-  sectorDrying?: Float32Array;   // per-sample localized racing line drying progress (0..1)
-  gripMultiplier: number;        // 1.0 down to ~0.64 baseline weather grip
+  wetness: number;         // 0.0 (bone dry) to 1.0 (waterlogged puddles)
+  rainIntensity: number;   // 0.0 to 1.0
+  gripMultiplier: number;  // 1.0 down to ~0.62
   windX: number;
   windZ: number;
   lightningTimer: number;

@@ -9,10 +9,9 @@ import {
   DamageMode,
   EffectiveCarStats,
   GameState,
-  GarageCameraView,
+  HandlingMode,
   RemoteRacerTelemetry,
   TireCompound,
-  TireGripSurfaceParams,
   TrackRubberPreset,
   TrackRubberState,
   TrackSpec,
@@ -74,8 +73,11 @@ export interface LiveHudSnapshot {
   trackRubberPercent: number;
   onRacingLine: boolean;
   onMarbles: boolean;
+  onKerb: boolean;
   lineGripModifier: number;
-  surfaceGripParams: TireGripSurfaceParams;
+  verticalLoadG: number;
+  asphaltGripFactor: number;
+  handlingMode: HandlingMode;
   weather: WeatherState;
   damage: VehicleDamageState;
   tires: VehicleTireState;
@@ -114,7 +116,6 @@ export interface RaceFinishSummary {
 interface RaceCanvasProps {
   gameState: GameState;
   isGarageOpen: boolean;
-  garageCameraView?: GarageCameraView;
   selectedCar: ClassicCarSpec;
   livery: CarLivery;
   effectiveStats: EffectiveCarStats;
@@ -123,6 +124,7 @@ interface RaceCanvasProps {
   driverName: string;
   weatherCondition: WeatherCondition;
   damageMode: DamageMode;
+  handlingMode: HandlingMode;
   trackRubberPreset: TrackRubberPreset;
   startingCompound: TireCompound;
   nextPitCompound: TireCompound;
@@ -147,49 +149,10 @@ interface RaceCanvasProps {
 const _camTargetPos = new THREE.Vector3();
 const _camLookAt = new THREE.Vector3();
 const _smoothLookAt = new THREE.Vector3();
-const _ghostTargetPos = new THREE.Vector3();
-
-function disposeMaterial(mat: THREE.Material) {
-  const anyMat = mat as unknown as Record<string, unknown>;
-  for (const key of ['map', 'bumpMap', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap']) {
-    const tex = anyMat[key] as THREE.Texture | undefined;
-    if (tex && !tex.userData?.shared) {
-      tex.dispose();
-    }
-  }
-  mat.dispose();
-}
-
-function disposeObject3D(root: THREE.Object3D) {
-  const geometries = new Set<THREE.BufferGeometry>();
-  const materials = new Set<THREE.Material>();
-
-  root.traverse((obj) => {
-    const mesh = obj as THREE.Mesh;
-    if (mesh.geometry) {
-      geometries.add(mesh.geometry);
-    }
-    if (mesh.material) {
-      if (Array.isArray(mesh.material)) {
-        for (const m of mesh.material) materials.add(m);
-      } else {
-        materials.add(mesh.material);
-      }
-    }
-  });
-
-  for (const geo of geometries) {
-    geo.dispose();
-  }
-  for (const mat of materials) {
-    disposeMaterial(mat);
-  }
-}
 
 export const RaceCanvas: React.FC<RaceCanvasProps> = ({
   gameState,
   isGarageOpen,
-  garageCameraView = 'orbit',
   selectedCar,
   livery,
   effectiveStats,
@@ -198,6 +161,7 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
   driverName,
   weatherCondition,
   damageMode,
+  handlingMode,
   trackRubberPreset,
   startingCompound,
   nextPitCompound,
@@ -216,7 +180,6 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
   const stateRef = useRef({
     gameState,
     isGarageOpen,
-    garageCameraView,
     selectedCar,
     livery,
     effectiveStats,
@@ -225,6 +188,7 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
     driverName,
     weatherCondition,
     damageMode,
+    handlingMode,
     trackRubberPreset,
     startingCompound,
     nextPitCompound,
@@ -240,7 +204,6 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
     stateRef.current = {
       gameState,
       isGarageOpen,
-      garageCameraView,
       selectedCar,
       livery,
       effectiveStats,
@@ -249,6 +212,7 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
       driverName,
       weatherCondition,
       damageMode,
+      handlingMode,
       trackRubberPreset,
       startingCompound,
       nextPitCompound,
@@ -262,7 +226,6 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
   }, [
     gameState,
     isGarageOpen,
-    garageCameraView,
     selectedCar,
     livery,
     effectiveStats,
@@ -271,6 +234,7 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
     driverName,
     weatherCondition,
     damageMode,
+    handlingMode,
     trackRubberPreset,
     startingCompound,
     nextPitCompound,
@@ -359,7 +323,7 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.02;
-    renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 1.5));
+    renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = !isSoftwareGl;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -368,7 +332,7 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
     container.innerHTML = '';
     container.appendChild(renderer.domElement);
 
-    const maxAnisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
+    const maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
 
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(
@@ -391,9 +355,9 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
     dirLight.position.set(65, 110, 45);
     if (!isSoftwareGl) {
       dirLight.castShadow = true;
-      dirLight.shadow.mapSize.width = 1024;
-      dirLight.shadow.mapSize.height = 1024;
-      const d = 75;
+      dirLight.shadow.mapSize.width = 2048;
+      dirLight.shadow.mapSize.height = 2048;
+      const d = 80;
       dirLight.shadow.camera.left = -d;
       dirLight.shadow.camera.right = d;
       dirLight.shadow.camera.top = d;
@@ -446,7 +410,6 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
     const buildTrack = (track: TrackSpec) => {
       if (trackEnvRig) {
         scene.remove(trackEnvRig.group);
-        disposeObject3D(trackEnvRig.group);
       }
       scene.background = new THREE.Color(track.theme.skyHorizon);
       scene.fog = new THREE.FogExp2(track.theme.fogColor, track.theme.fogDensity);
@@ -491,7 +454,6 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
         nextPitCompound: nCompound,
       } = stateRef.current;
 
-      disposeObject3D(vehiclesGroup);
       vehiclesGroup.clear();
       carRigs.clear();
       aiEffectiveStats.clear();
@@ -567,14 +529,27 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
       }
 
       const p = vehiclesState[0];
-      const initAngle = p.yaw + 0.58;
-      titleOrbitAngle = initAngle;
-      const radX = Math.sin(initAngle) * 6.2;
-      const radZ = Math.cos(initAngle) * 6.2;
-      const lookLeftX = -Math.cos(initAngle) * 1.15;
-      const lookLeftZ = Math.sin(initAngle) * 1.15;
-      camera.position.set(p.x + radX, p.y + 1.85, p.z + radZ);
-      _smoothLookAt.set(p.x + lookLeftX, p.y + 0.52, p.z + lookLeftZ);
+      const fx = Math.sin(p.yaw);
+      const fz = Math.cos(p.yaw);
+      if (stateRef.current.gameState === 'title') {
+        const initOrbit = p.yaw + 0.65;
+        const radius = stateRef.current.isGarageOpen ? 5.6 : 6.2;
+        const height = stateRef.current.isGarageOpen ? 1.65 : 1.85;
+        const rightShift = stateRef.current.isGarageOpen ? -1.45 : -1.25;
+        camera.position.set(
+          p.x + Math.sin(initOrbit) * radius,
+          p.y + height,
+          p.z + Math.cos(initOrbit) * radius
+        );
+        _smoothLookAt.set(
+          p.x + Math.cos(initOrbit) * rightShift,
+          p.y + 0.55,
+          p.z - Math.sin(initOrbit) * rightShift
+        );
+      } else {
+        camera.position.set(p.x - fx * 6.5, p.y + 2.3, p.z - fz * 6.5);
+        _smoothLookAt.set(p.x + fx * 6, p.y + 0.9, p.z + fz * 6);
+      }
       camera.lookAt(_smoothLookAt);
     };
 
@@ -582,7 +557,6 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
       const oldRig = carRigs.get('player');
       if (oldRig) {
         vehiclesGroup.remove(oldRig.root);
-        disposeObject3D(oldRig.root);
       }
       const newRig = buildClassicCarMesh(spec, liv, isSoftwareGl, maxAnisotropy);
       vehiclesGroup.add(newRig.root);
@@ -594,17 +568,12 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
         newRig.root.position.set(vehiclesState[0].x, vehiclesState[0].y, vehiclesState[0].z);
         newRig.root.rotation.set(0, vehiclesState[0].yaw, 0);
       }
-      renderer.render(scene, camera);
     };
 
     const updatePlayerLiveryOnly = (liv: CarLivery) => {
       const rig = carRigs.get('player');
       if (!rig) return;
-      const newTex = createLiveryCanvasTexture(
-        liv,
-        maxAnisotropy,
-        stateRef.current.selectedCar.bodyStyle
-      );
+      const newTex = createLiveryCanvasTexture(liv, maxAnisotropy);
       rig.liveryTexture.dispose();
       rig.liveryTexture = newTex;
       rig.bodyPaintMat.map = newTex;
@@ -612,7 +581,6 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
       if (vehiclesState[0]) {
         vehiclesState[0].livery = liv;
       }
-      renderer.render(scene, camera);
     };
 
     const syncPitStrategy = (nextComp: TireCompound, armed: boolean) => {
@@ -725,8 +693,8 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
         } else {
           raceElapsedMs += dt * 1000;
 
-          // Update Dynamic Weather, Puddle Formation, Track Drying & Track Rubbering Visuals in real-time
-          updateWeather(currentWeather, dt, raceElapsedMs, track, vehiclesState);
+          // Update Dynamic Weather & Track Rubbering Visuals in real-time
+          updateWeather(currentWeather, dt, raceElapsedMs);
           if (trackEnvRig) {
             trackEnvRig.updateWeatherVisuals(currentWeather);
             trackEnvRig.updateTrackRubberVisuals(currentRubberState, currentWeather);
@@ -754,7 +722,7 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
             steerAxis: tInput.steerAxis,
           };
 
-          // Step Player Physics with Weather, Tire Wear/Heat/Integrity, Pit Service & Track Rubbering
+          // Step Player Physics with Weather, Tire Wear/Heat/Integrity, Pit Service, Track Rubbering & Handling Mode
           const pEvents = stepVehiclePhysics(
             player,
             playerInput,
@@ -765,7 +733,8 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
             currentWeather,
             damageMode,
             currentRubberState,
-            wearMult
+            wearMult,
+            stateRef.current.handlingMode
           );
           if (player.isOffTrack) cleanRaceFlag = false;
 
@@ -1098,31 +1067,36 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
           rig.root.position.set(v.x, v.y, v.z);
           rig.root.rotation.set(0, v.yaw, 0);
 
+          // Apply 3D vertical suspension heave over hill crests, compressions, and serrated kerbs
+          rig.bodyGroup.position.y = v.suspensionOffsetM ?? 0;
           rig.bodyGroup.rotation.x = v.pitchRad;
           rig.bodyGroup.rotation.z = v.rollRad;
 
           rig.frontLeftPivot.rotation.y = v.steerAngle;
           rig.frontRightPivot.rotation.y = v.steerAngle;
 
-          // Turn cockpit steering wheel with steering angle
-          rig.steeringWheelPivot.rotation.z = -v.steerAngle * 2.6;
+          // Turn cockpit steering wheel & driver's gloved hands with steering angle
+          rig.steeringWheelPivot.rotation.z = -v.steerAngle * 1.75;
 
           // Hide player's own helmet in first-person cockpit view so camera is never obstructed
           if (v.isPlayer) {
             rig.helmetMesh.visible = camMode !== 'cockpit';
           }
 
-          // Animate working windshield wipers in rain, brake rotor thermal glow, exhaust flames, and tire compound ring color
+          // Animate working windshield wipers, 3D Veglia gauges, shift light, gated shifter, brake glow, and exhaust flames
           updateCarWipers(
             rig,
             dt,
             currentWeather.rainIntensity > 0.08,
             v.isBoosting,
             v.frontBrakeGlow,
-            v.tires.compound
+            v.tires.compound,
+            v.speedMs * 3.6,
+            v.rpm,
+            v.gear
           );
 
-          const wheelSpinDelta = (v.speedMs * dt) / 0.305;
+          const wheelSpinDelta = (v.speedMs * dt) / 0.345;
           for (const w of rig.wheels) {
             w.rotation.x += wheelSpinDelta;
           }
@@ -1149,8 +1123,7 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
             remoteGhostsGroup.add(ghostRig.root);
             remoteGhostMeshes.set(r.id, ghostRig);
           }
-          _ghostTargetPos.set(r.x, r.y, r.z);
-          ghostRig.root.position.lerp(_ghostTargetPos, 0.25);
+          ghostRig.root.position.lerp(new THREE.Vector3(r.x, r.y, r.z), 0.25);
           ghostRig.root.rotation.y = r.yaw;
         }
 
@@ -1166,13 +1139,18 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
             ? 59
             : camMode === 'chase_far'
             ? 56
+            : camMode === 'cockpit'
+            ? 66
             : camMode === 'bumper'
             ? 68
             : camMode === 'tv_side'
             ? 52
             : 64;
-        const targetFov =
-          baseFov + speedNorm * 11 + (player.isDrafting ? 3.5 : 0) + (player.isBoosting ? 6.5 : 0);
+        const fovDynamicDelta =
+          camMode === 'cockpit'
+            ? speedNorm * 3.2 + (player.isBoosting ? 2.5 : 0)
+            : speedNorm * 11 + (player.isDrafting ? 3.5 : 0) + (player.isBoosting ? 6.5 : 0);
+        const targetFov = baseFov + fovDynamicDelta;
         camera.fov = THREE.MathUtils.damp(camera.fov, targetFov, 6, dt);
         camera.updateProjectionMatrix();
 
@@ -1211,16 +1189,22 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
           );
           camera.lookAt(_camLookAt);
         } else if (camMode === 'cockpit') {
-          // Left-hand driver seat is at local +X = +0.19 -> world (-rx * 0.19, -rz * 0.19)
+          // Mature first-person driver cockpit view: frames sculpted leather binnacle, working Veglia speedometer & tachometer,
+          // Nardi steering wheel with gloved hands, rearview mirror, and apex sightline over the hood.
+          // Note: local +X in carBuilder.ts is +rx in world space (left-hand driver seat at +0.19).
+          const baseEyeH = pCarSpec.bodyStyle === 'detroit_proto' ? 0.80 : 0.86;
+          const suspHeave = (player.suspensionOffsetM ?? 0) * 0.65;
+          const headLatSway = Math.max(-0.022, Math.min(0.022, -player.angularVelocity * 0.012));
+          const eyeY = player.y + baseEyeH + suspHeave;
           camera.position.set(
-            player.x - fx * 0.22 - rx * 0.19,
-            player.y + 0.85,
-            player.z - fz * 0.22 - rz * 0.19
+            player.x - fx * 0.34 + rx * (0.19 + headLatSway),
+            eyeY,
+            player.z - fz * 0.34 + rz * (0.19 + headLatSway)
           );
           _camLookAt.set(
-            player.x + fx * 12 - rx * 0.16,
-            player.y + 0.68 - player.pitchRad * 6,
-            player.z + fz * 12 - rz * 0.16
+            player.x + fx * 12 + rx * 0.14,
+            eyeY - 0.32 - player.pitchRad * 6.5,
+            player.z + fz * 12 + rz * 0.14
           );
           camera.lookAt(_camLookAt);
         } else if (camMode === 'bumper') {
@@ -1285,8 +1269,11 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
             trackRubberPercent: Math.round(currentRubberState.globalRubberLevel * 100),
             onRacingLine: player.onRacingLine,
             onMarbles: player.onMarbles,
+            onKerb: player.onKerb ?? false,
             lineGripModifier: player.lineGripModifier,
-            surfaceGripParams: { ...player.surfaceGripParams },
+            verticalLoadG: Number((player.verticalLoadG ?? 1.0).toFixed(2)),
+            asphaltGripFactor: Number((player.asphaltGripFactor ?? 1.0).toFixed(2)),
+            handlingMode: stateRef.current.handlingMode,
             weather: { ...currentWeather },
             damage: { ...player.damage },
             tires: {
@@ -1326,73 +1313,25 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
       } else {
         racingAudio.silenceContinuous();
 
-        if (player && (currentGameState === 'title' || garageOpen)) {
-          const gView = stateRef.current.garageCameraView;
-          let targetAngle = titleOrbitAngle;
-          let radius = garageOpen ? 6.0 : 6.4;
-          let height = garageOpen ? 1.55 : 2.05;
-          let lookY = garageOpen ? 0.46 : 0.55;
-          // Shift camera lookAt to screen-left (-cos(a), 0, +sin(a)) so the 3D car sits centered in the open right 62% of the viewport
-          let screenRightCarShift = garageOpen ? 1.35 : 1.15;
-          let targetFov = garageOpen ? 44 : 48;
-
-          if (!garageOpen || gView === 'orbit') {
-            titleOrbitAngle += dt * (garageOpen ? 0.42 : 0.22);
-            targetAngle = titleOrbitAngle;
-          } else if (gView === 'front_quarter') {
-            targetAngle = player.yaw + 0.62;
-            radius = 5.75;
-            height = 1.38;
-            lookY = 0.44;
-            screenRightCarShift = 1.28;
-            targetFov = 43;
-          } else if (gView === 'side_profile') {
-            targetAngle = player.yaw + Math.PI * 0.5;
-            radius = 6.45;
-            height = 1.18;
-            lookY = 0.45;
-            screenRightCarShift = 1.42;
-            targetFov = 43;
-          } else if (gView === 'rear_engine') {
-            targetAngle = player.yaw + Math.PI - 0.58;
-            radius = 5.65;
-            height = 1.48;
-            lookY = 0.46;
-            screenRightCarShift = 1.25;
-            targetFov = 43;
-          } else if (gView === 'cockpit_closeup') {
-            targetAngle = player.yaw + 1.05;
-            radius = 3.85;
-            height = 1.52;
-            lookY = 0.56;
-            screenRightCarShift = 0.85;
-            targetFov = 42;
-          }
-
-          const radX = Math.sin(targetAngle) * radius;
-          const radZ = Math.cos(targetAngle) * radius;
+        if (player && currentGameState === 'title') {
+          titleOrbitAngle += dt * (garageOpen ? 0.35 : 0.18);
+          const orbitYaw = player.yaw + titleOrbitAngle;
+          const radius = garageOpen ? 5.6 : 6.2;
+          const height = garageOpen ? 1.65 : 1.85;
+          const radX = Math.sin(orbitYaw) * radius;
+          const radZ = Math.cos(orbitYaw) * radius;
+          const rightShift = garageOpen ? -1.45 : -1.25;
 
           _camTargetPos.set(player.x + radX, player.y + height, player.z + radZ);
-          // Camera forward F = (-sin(a), 0, -cos(a)), Up U = (0, 1, 0) => Screen-Right R = F x U = (cos(a), 0, -sin(a)).
-          // Looking toward -R shifts the car toward +R (the open right side of the viewport).
-          const lookLeftX = -Math.cos(targetAngle) * screenRightCarShift;
-          const lookLeftZ = Math.sin(targetAngle) * screenRightCarShift;
-          _camLookAt.set(player.x + lookLeftX, player.y + lookY, player.z + lookLeftZ);
+          const perpX = Math.cos(orbitYaw) * rightShift;
+          const perpZ = -Math.sin(orbitYaw) * rightShift;
+          _camLookAt.set(player.x + perpX, player.y + 0.55, player.z + perpZ);
 
-          if (garageOpen && gView !== 'orbit') {
-            camera.fov = targetFov;
-            camera.updateProjectionMatrix();
-            camera.position.copy(_camTargetPos);
-            _smoothLookAt.copy(_camLookAt);
-            camera.lookAt(_smoothLookAt);
-          } else {
-            camera.fov = THREE.MathUtils.damp(camera.fov, targetFov, 10, dt);
-            camera.updateProjectionMatrix();
-            const snapAlpha = 1 - Math.exp(-8 * dt);
-            camera.position.lerp(_camTargetPos, snapAlpha);
-            _smoothLookAt.lerp(_camLookAt, snapAlpha);
-            camera.lookAt(_smoothLookAt);
-          }
+          camera.fov = THREE.MathUtils.damp(camera.fov, garageOpen ? 46 : 50, 8, dt);
+          camera.updateProjectionMatrix();
+          camera.position.lerp(_camTargetPos, 1 - Math.exp(-12 * dt));
+          _smoothLookAt.lerp(_camLookAt, 1 - Math.exp(-14 * dt));
+          camera.lookAt(_smoothLookAt);
         }
       }
 
@@ -1416,10 +1355,6 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
       window.removeEventListener('blur', clearInputs);
       resizeObserver.disconnect();
       racingAudio.silenceContinuous();
-      disposeObject3D(scene);
-      if (scene.environment) {
-        scene.environment.dispose();
-      }
       renderer.dispose();
     };
   }, [touchInputRef, remoteRacersRef]);

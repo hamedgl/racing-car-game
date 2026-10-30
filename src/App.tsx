@@ -13,7 +13,7 @@ import {
   ControlInput,
   DamageMode,
   GameState,
-  GarageCameraView,
+  HandlingMode,
   HandlingTuning,
   LeaderboardEntry,
   RemoteRacerTelemetry,
@@ -66,7 +66,6 @@ export default function App() {
 
   const [gameState, setGameState] = useState<GameState>(initialAutostart ? 'playing' : 'title');
   const [activeModal, setActiveModal] = useState<'none' | 'garage' | 'tracks' | 'leaderboards'>('none');
-  const [garageCameraView, setGarageCameraView] = useState<GarageCameraView>('orbit');
 
   const [selectedCar, setSelectedCar] = useState<ClassicCarSpec>(CLASSIC_CARS[0]);
   const [liveryMap, setLiveryMap] = useState<Record<string, CarLivery>>(() => {
@@ -90,7 +89,16 @@ export default function App() {
 
   const [activeLevel, setActiveLevel] = useState<ChampionshipLevelSpec>(CHAMPIONSHIP_LEVELS[0]);
   const [selectedTrack, setSelectedTrack] = useState<TrackSpec>(TRACKS.monza_storico);
-  const [cameraMode, setCameraMode] = useState<CameraMode>('chase');
+  const [cameraMode, setCameraMode] = useState<CameraMode>(() => {
+    if (typeof window !== 'undefined') {
+      const camParam = new URLSearchParams(window.location.search).get('cam');
+      if (camParam && CAMERA_SEQUENCE.includes(camParam as CameraMode)) {
+        return camParam as CameraMode;
+      }
+    }
+    return 'chase';
+  });
+  const [handlingMode, setHandlingMode] = useState<HandlingMode>('pro_assisted');
   const [isMuted, setIsMuted] = useState<boolean>(false);
 
   // Dynamic Weather, Tire Strategy & Track Rubbering Presets (Damage visual deformations disabled)
@@ -100,6 +108,10 @@ export default function App() {
   const [startingCompound, setStartingCompound] = useState<TireCompound>('medium');
   const [nextPitCompound, setNextPitCompound] = useState<TireCompound>('soft');
   const [pitRequestArmed, setPitRequestArmed] = useState<boolean>(false);
+
+  const handleToggleHandlingMode = useCallback(() => {
+    setHandlingMode((prev) => (prev === 'pro_assisted' ? 'pure_historic' : 'pro_assisted'));
+  }, []);
 
   const handleCycleWeather = useCallback(() => {
     const sequence: WeatherCondition[] = ['clear', 'overcast', 'rain', 'storm', 'dynamic'];
@@ -144,8 +156,8 @@ export default function App() {
     setPitRequestArmed(false);
   }, []);
 
-  // Unlimited Championship Credits (∞ CR) so players can freely upgrade and tune all cars
-  const [credits, setCredits] = useState<number>(999_999_999);
+  // Start with 4,800 Championship Credits so players can immediately test upgrades
+  const [credits, setCredits] = useState<number>(4800);
   const [driverName, setDriverName] = useState<string>('T. Nuvolari');
 
   const [raceResetTrigger, setRaceResetTrigger] = useState<number>(0);
@@ -207,21 +219,16 @@ export default function App() {
     trackRubberPercent: 18,
     onRacingLine: true,
     onMarbles: false,
+    onKerb: false,
     lineGripModifier: 1.02,
-    surfaceGripParams: {
-      surfaceWetness: 0,
-      puddleDepth: 0,
-      trackDryingLine: 1.0,
-      hydroplaneFactor: 0,
-      effectiveSurfaceGrip: 1.02,
-    },
+    verticalLoadG: 1.0,
+    asphaltGripFactor: 1.12,
+    handlingMode: 'pro_assisted',
     weather: {
       condition: 'clear',
       activeType: 'clear',
       wetness: 0,
       rainIntensity: 0,
-      puddleLevel: 0,
-      dryingLineIntensity: 1.0,
       gripMultiplier: 1.0,
       windX: 0,
       windZ: 0,
@@ -466,6 +473,8 @@ export default function App() {
         }
       } else if (e.code === 'KeyC' && (gameState === 'playing' || gameState === 'paused')) {
         handleCycleCamera();
+      } else if (e.code === 'KeyH' && (gameState === 'playing' || gameState === 'paused')) {
+        handleToggleHandlingMode();
       } else if (e.code === 'KeyT' && (gameState === 'playing' || gameState === 'paused')) {
         handleCycleNextPitCompound();
       } else if (e.code === 'KeyB' && gameState === 'playing') {
@@ -484,6 +493,7 @@ export default function App() {
     activeModal,
     handleStartRace,
     handleCycleCamera,
+    handleToggleHandlingMode,
     handleCycleNextPitCompound,
     handleTogglePitRequest,
     handleToggleMute,
@@ -492,27 +502,14 @@ export default function App() {
 
   const handleBuyUpgrade = (system: keyof CarUpgrades) => {
     const currLvl = activeUpgrades[system];
-    if (currLvl >= 5) return;
-    // Unlimited CR: never deplete player credits below 999,999,999
-    setCredits(999_999_999);
+    const cost = getUpgradeCost(currLvl);
+    if (currLvl >= 5 || credits < cost) return;
+    setCredits((prev) => prev - cost);
     setUpgradesMap((prev) => ({
       ...prev,
       [selectedCar.id]: {
         ...activeUpgrades,
         [system]: currLvl + 1,
-      },
-    }));
-  };
-
-  const handleMaxAllUpgrades = () => {
-    setCredits(999_999_999);
-    setUpgradesMap((prev) => ({
-      ...prev,
-      [selectedCar.id]: {
-        engineLevel: 5,
-        transmissionLevel: 5,
-        tiresLevel: 5,
-        chassisWeightLevel: 5,
       },
     }));
   };
@@ -523,7 +520,6 @@ export default function App() {
       <RaceCanvas
         gameState={gameState}
         isGarageOpen={activeModal === 'garage'}
-        garageCameraView={garageCameraView}
         selectedCar={selectedCar}
         livery={activeLivery}
         effectiveStats={effectiveStats}
@@ -532,6 +528,7 @@ export default function App() {
         driverName={driverName}
         weatherCondition={weatherCondition}
         damageMode={damageMode}
+        handlingMode={handlingMode}
         trackRubberPreset={trackRubberPreset}
         startingCompound={startingCompound}
         nextPitCompound={nextPitCompound}
@@ -571,13 +568,14 @@ export default function App() {
           track={selectedTrack}
           activeLevel={activeLevel}
           cameraMode={cameraMode}
+          handlingMode={handlingMode}
           isMuted={isMuted}
           nextPitCompound={nextPitCompound}
           pitRequestArmed={pitRequestArmed}
           remoteRacers={remoteRacers}
           touchInputRef={touchInputRef}
           onCycleCamera={handleCycleCamera}
-          onCycleWeather={handleCycleWeather}
+          onToggleHandlingMode={handleToggleHandlingMode}
           onCycleNextPitCompound={handleCycleNextPitCompound}
           onTogglePitRequest={handleTogglePitRequest}
           onToggleMute={handleToggleMute}
@@ -591,13 +589,13 @@ export default function App() {
         <GarageModal
           selectedCar={selectedCar}
           livery={activeLivery}
+          liveryMap={liveryMap}
           upgrades={activeUpgrades}
           tuning={tuning}
+          handlingMode={handlingMode}
           effectiveStats={effectiveStats}
           credits={credits}
           activePresetKey={activePresetKey}
-          garageCameraView={garageCameraView}
-          onSelectGarageCameraView={setGarageCameraView}
           onSelectCar={(car) => setSelectedCar(car)}
           onUpdateLivery={(newLiv) =>
             setLiveryMap((prev) => ({
@@ -606,11 +604,11 @@ export default function App() {
             }))
           }
           onBuyUpgrade={handleBuyUpgrade}
-          onMaxAllUpgrades={handleMaxAllUpgrades}
           onUpdateTuning={(newTuning, presetKey) => {
             setTuning(newTuning);
             if (presetKey) setActivePresetKey(presetKey);
           }}
+          onToggleHandlingMode={handleToggleHandlingMode}
           onClose={() => setActiveModal('none')}
         />
       )}

@@ -120,6 +120,10 @@ function buildTrackSamples(
         Math.hypot(next2.x - prev2.x, next2.z - prev2.z) || 1;
     const curvature = (2 * cross) / denom;
 
+    // Signed vertical curvature (d^2y / ds^2): negative over crests (unloads suspension), positive in valley compressions (loads tires)
+    const spanStepM = Math.max(4, (totalLengthM / sampleCount) * 4);
+    const verticalCurvature = (next2.y - 2 * curr.y + prev2.y) / (spanStepM * spanStepM);
+
     samples.push({
       index: i,
       s: distances[i] / totalLengthM,
@@ -135,6 +139,7 @@ function buildTrackSamples(
       width: curr.width,
       bankingRad: curr.bankingRad,
       curvature,
+      verticalCurvature,
       racingLineOffset: 0,
       cornerLoadIntensity: 0,
     });

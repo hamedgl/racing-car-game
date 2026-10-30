@@ -60,9 +60,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
             STAGE {activeLevel.level}: {activeLevel.title.toUpperCase()}
           </span>
           <span aria-hidden="true">·</span>
-          <span data-testid="unlimited-cr-badge" className="font-mono-tabular text-[#4ade80] font-semibold">
-            ∞ UNLIMITED CR ({credits.toLocaleString()} CR)
-          </span>
+          <span className="font-mono-tabular text-[#f59e0b]">{credits.toLocaleString()} CR</span>
           <span aria-hidden="true">·</span>
           <span className="font-mono-tabular">{onlineCount} Drivers in Paddock</span>
         </div>

@@ -17,7 +17,7 @@ import {
   TireCompound,
   CornerTireState,
   VehicleTireState,
-  TireGripSurfaceParams,
+  HandlingMode,
 } from './types';
 import { findClosestTrackSample } from './tracks';
 
@@ -575,15 +575,10 @@ export function createInitialDamageState(): VehicleDamageState {
   };
 }
 
-export function createInitialWeatherState(
-  condition: WeatherCondition = 'clear',
-  sampleCount = 600
-): WeatherState {
+export function createInitialWeatherState(condition: WeatherCondition = 'clear'): WeatherState {
   let activeType: 'clear' | 'overcast' | 'rain' | 'storm' = 'clear';
   let wetness = 0;
   let rainIntensity = 0;
-  let puddleLevel = 0;
-  let dryingLineIntensity = 1.0;
   let gripMultiplier = 1.0;
 
   switch (condition) {
@@ -591,32 +586,24 @@ export function createInitialWeatherState(
       activeType = 'overcast';
       wetness = 0.08;
       rainIntensity = 0;
-      puddleLevel = 0.02;
-      dryingLineIntensity = 0.92;
       gripMultiplier = 0.96;
       break;
     case 'rain':
       activeType = 'rain';
       wetness = 0.72;
       rainIntensity = 0.75;
-      puddleLevel = 0.56;
-      dryingLineIntensity = 0.18;
       gripMultiplier = 0.74;
       break;
     case 'storm':
       activeType = 'storm';
       wetness = 1.0;
       rainIntensity = 1.0;
-      puddleLevel = 0.92;
-      dryingLineIntensity = 0.05;
       gripMultiplier = 0.62;
       break;
     case 'dynamic':
       activeType = 'overcast';
       wetness = 0.25;
       rainIntensity = 0.2;
-      puddleLevel = 0.14;
-      dryingLineIntensity = 0.68;
       gripMultiplier = 0.90;
       break;
     case 'clear':
@@ -624,17 +611,8 @@ export function createInitialWeatherState(
       activeType = 'clear';
       wetness = 0;
       rainIntensity = 0;
-      puddleLevel = 0;
-      dryingLineIntensity = 1.0;
       gripMultiplier = 1.0;
       break;
-  }
-
-  const sectorPuddles = new Float32Array(sampleCount);
-  const sectorDrying = new Float32Array(sampleCount);
-  for (let i = 0; i < sampleCount; i++) {
-    sectorPuddles[i] = puddleLevel;
-    sectorDrying[i] = dryingLineIntensity;
   }
 
   return {
@@ -642,10 +620,6 @@ export function createInitialWeatherState(
     activeType,
     wetness,
     rainIntensity,
-    puddleLevel,
-    dryingLineIntensity,
-    sectorPuddles,
-    sectorDrying,
     gripMultiplier,
     windX: -4.5,
     windZ: 2.2,
@@ -653,286 +627,54 @@ export function createInitialWeatherState(
   };
 }
 
-/**
- * Simulates dynamic standing water puddle formation during rain and progressive track drying
- * (via solar/wind evaporation + tire water dispersion along the racing groove) in real time.
- */
-export function stepTrackPuddleAndDryingPhysics(
-  weather: WeatherState,
-  dt: number,
-  track?: TrackSpec,
-  vehicles?: VehiclePhysicsState[]
-): void {
-  const sampleCount = track ? track.samples.length : weather.sectorPuddles?.length || 600;
-  if (!weather.sectorPuddles || weather.sectorPuddles.length !== sampleCount) {
-    weather.sectorPuddles = new Float32Array(sampleCount);
-    weather.sectorPuddles.fill(weather.puddleLevel ?? 0);
-  }
-  if (!weather.sectorDrying || weather.sectorDrying.length !== sampleCount) {
-    weather.sectorDrying = new Float32Array(sampleCount);
-    weather.sectorDrying.fill(weather.dryingLineIntensity ?? (1 - weather.wetness));
-  }
-
-  const windSpeed = Math.hypot(weather.windX, weather.windZ);
-  const rainRate = weather.rainIntensity;
-
-  // 1. Global Puddle Formation vs Natural Drainage & Evaporation
-  if (rainRate > 0.08) {
-    // Rain feeds standing water puddles; heavier downpours saturate drainage faster
-    const puddleAccumRate = Math.pow(rainRate, 1.25) * 0.065;
-    const naturalRunoff = 0.012;
-    weather.puddleLevel = clamp(
-      (weather.puddleLevel ?? 0) + (puddleAccumRate - naturalRunoff) * dt,
-      0,
-      1.0
-    );
-    // Heavy rain washes over and re-wets the drying racing line
-    const rewetRate = rainRate * 0.055;
-    weather.dryingLineIntensity = clamp(
-      (weather.dryingLineIntensity ?? 0.5) - rewetRate * dt,
-      0.04,
-      1.0
-    );
-  } else {
-    // Track Drying Phase: evaporation + wind + runoff shrink puddles and dry the racing groove
-    const solarFactor = weather.activeType === 'clear' ? 1.45 : 0.85;
-    const evapRate = (0.032 + windSpeed * 0.0035) * solarFactor;
-    weather.puddleLevel = clamp((weather.puddleLevel ?? 0) - evapRate * 0.9 * dt, 0, 1.0);
-    weather.wetness = clamp(weather.wetness - evapRate * 0.65 * dt, 0, 1.0);
-    weather.dryingLineIntensity = clamp(
-      (weather.dryingLineIntensity ?? 0.5) + evapRate * 1.35 * dt,
-      0,
-      1.0
-    );
-  }
-
-  // 2. Per-Sector Topographic Puddle Pooling & Tire Water Dispersion
-  const puddles = weather.sectorPuddles;
-  const drying = weather.sectorDrying;
-  let puddleSum = 0;
-  let dryingSum = 0;
-
-  for (let i = 0; i < sampleCount; i++) {
-    // Low-slope basins & low-camber sections pool more standing water; steep hills drain faster
-    let drainageEfficiency = 1.0;
-    let basinPoolingFactor = 1.0;
-    if (track && track.samples[i]) {
-      const s = track.samples[i];
-      const absGrade = Math.abs(s.ty);
-      const absBank = Math.abs(s.bankingRad);
-      drainageEfficiency = 0.65 + absGrade * 6.5 + absBank * 2.8;
-      basinPoolingFactor = clamp(1.38 - absGrade * 7.0 - absBank * 2.2, 0.45, 1.45);
-    }
-
-    const targetSectorPuddle = clamp(weather.puddleLevel * basinPoolingFactor, 0, 1.0);
-    const puddleRate = rainRate > 0.08 ? 0.45 : 0.35 * drainageEfficiency;
-    puddles[i] = clamp(
-      puddles[i] + (targetSectorPuddle - puddles[i]) * Math.min(1, dt * puddleRate),
-      0,
-      1.0
-    );
-
-    const targetSectorDry = clamp(weather.dryingLineIntensity, 0, 1.0);
-    drying[i] = clamp(
-      drying[i] + (targetSectorDry - drying[i]) * Math.min(1, dt * 0.32),
-      0,
-      1.0
-    );
-    puddleSum += puddles[i];
-    dryingSum += drying[i];
-  }
-
-  // 3. Active Vehicle Tire Water Dispersion & Thermal Groove Drying
-  if (vehicles && vehicles.length > 0) {
-    for (const v of vehicles) {
-      if (v.speedMs < 4 || v.isOffTrack) continue;
-      const idx = ((v.trackSampleIndex % sampleCount) + sampleCount) % sampleCount;
-      const speedFactor = clamp(v.speedMs / 55, 0.15, 1.4);
-      const isWetCompound = v.tires?.compound === 'wet';
-      // Wet Pioggia tires pump 2.2x more standing water out of the racing groove
-      const waterPumpMult = isWetCompound ? 2.2 : 1.15;
-      const dispersion = dt * 0.11 * speedFactor * waterPumpMult;
-
-      for (let k = -2; k <= 2; k++) {
-        const sIdx = (idx + k + sampleCount) % sampleCount;
-        const falloff = 1.0 - Math.abs(k) * 0.28;
-        puddles[sIdx] = clamp(puddles[sIdx] - dispersion * falloff * 0.65, 0, 1.0);
-        drying[sIdx] = clamp(drying[sIdx] + dispersion * falloff * 0.95, 0, 1.0);
-      }
-    }
-
-    // Recompute global averages after vehicle tire dispersion
-    puddleSum = 0;
-    dryingSum = 0;
-    for (let i = 0; i < sampleCount; i++) {
-      puddleSum += puddles[i];
-      dryingSum += drying[i];
-    }
-    weather.puddleLevel = clamp(puddleSum / sampleCount, 0, 1.0);
-    weather.dryingLineIntensity = clamp(dryingSum / sampleCount, 0, 1.0);
-  }
-
-  // Baseline weather grip multiplier reflects wetness, standing puddles, and drying groove recovery
-  const dryRecovery = weather.dryingLineIntensity * 0.10 * weather.wetness;
-  const puddlePenalty = weather.puddleLevel * 0.12;
-  weather.gripMultiplier = Number(
-    clamp(1.0 - weather.wetness * 0.30 - puddlePenalty + dryRecovery, 0.60, 1.0).toFixed(4)
-  );
-}
-
-/**
- * Evaluates real-time tire-to-surface grip parameters at the vehicle's exact track position,
- * accounting for localized standing water puddles, track drying along the racing line,
- * hydroplaning lift at speed, tire compound water-channeling, and rubbered groove grip.
- */
-export function evaluateSurfaceGripParameters(
-  vehicle: VehiclePhysicsState,
-  track: TrackSpec,
-  sampleIndex: number,
-  lateralOffset: number,
-  weather?: WeatherState,
-  rubberState?: TrackRubberState
-): TireGripSurfaceParams {
-  const n = track.samples.length;
-  const idx = ((sampleIndex % n) + n) % n;
-  const sample = track.samples[idx];
-  const distFromRacingLine = Math.abs(lateralOffset - sample.racingLineOffset);
-  const racingLineProximity = clamp(1.0 - distFromRacingLine / 2.25, 0, 1);
-
-  const baseWetness = weather ? weather.wetness : 0;
-  const sectorPuddle =
-    weather?.sectorPuddles && weather.sectorPuddles.length > 0
-      ? weather.sectorPuddles[idx % weather.sectorPuddles.length]
-      : weather?.puddleLevel ?? baseWetness * 0.75;
-  const sectorDrying =
-    weather?.sectorDrying && weather.sectorDrying.length > 0
-      ? weather.sectorDrying[idx % weather.sectorDrying.length]
-      : weather?.dryingLineIntensity ?? (1 - baseWetness);
-
-  // Standing puddles pool deeper off the racing line, near kerbs, and in low-slope basins
-  const offLinePuddleBoost = (1.0 - racingLineProximity * 0.72) * (1.0 + Math.abs(lateralOffset) * 0.04);
-  const trackDryingLine = clamp(sectorDrying * (0.35 + racingLineProximity * 0.65), 0, 1);
-
-  // On the dried racing line, standing water is displaced and surface wetness is markedly lower
-  const localPuddleDepth =
-    baseWetness <= 0.02
-      ? 0
-      : clamp(sectorPuddle * offLinePuddleBoost * (1.0 - racingLineProximity * trackDryingLine * 0.68), 0, 1);
-
-  const surfaceWetness = clamp(
-    baseWetness * (1.0 - racingLineProximity * trackDryingLine * 0.55) + localPuddleDepth * 0.25,
-    0,
-    1
-  );
-
-  // Hydroplaning calculation: hitting standing water puddles at high speed lifts dry tires
-  const isWetTire = vehicle.tires?.compound === 'wet';
-  const speedHydroTrigger = clamp((vehicle.speedMs - 26) / 48, 0, 1.25);
-  const compoundHydroResist = isWetTire ? 0.24 : 1.0; // Wet tires resist 76% of hydroplaning
-  const hydroplaneFactor =
-    localPuddleDepth > 0.18
-      ? clamp((localPuddleDepth - 0.14) * speedHydroTrigger * compoundHydroResist * 1.15, 0, 0.85)
-      : 0;
-
-  // Evaluate tire grip multiplier at the local surface wetness (so drying line helps dry compounds!)
-  const tireGripMult = vehicle.tires
-    ? evaluateTireGripMultiplier(vehicle.tires, surfaceWetness)
-    : 1.0;
-
-  const rubberEffect = evaluateTrackRubberEffect(
-    track,
-    idx,
-    lateralOffset,
-    rubberState,
-    surfaceWetness
-  );
-
-  // Effective weather surface factor: Wet tires maintain strong grip on wet asphalt & puddles,
-  // while dry tires gain substantial grip by staying in the dried racing groove
-  const wetAsphaltFactor = isWetTire
-    ? 1.0 - surfaceWetness * 0.08 - localPuddleDepth * 0.10
-    : 1.0 - surfaceWetness * 0.24 - localPuddleDepth * 0.22 + racingLineProximity * trackDryingLine * surfaceWetness * 0.16;
-
-  const hydroplaneGripLoss = 1.0 - hydroplaneFactor * 0.45;
-  const offTrackFactor = vehicle.isOffTrack ? 0.86 : 1.0;
-
-  const effectiveSurfaceGrip = Number(
-    clamp(
-      track.surfaceGrip *
-        wetAsphaltFactor *
-        hydroplaneGripLoss *
-        tireGripMult *
-        rubberEffect.lineGripModifier *
-        offTrackFactor,
-      0.48,
-      1.45
-    ).toFixed(4)
-  );
-
-  return {
-    surfaceWetness: Number(surfaceWetness.toFixed(4)),
-    puddleDepth: Number(localPuddleDepth.toFixed(4)),
-    trackDryingLine: Number(trackDryingLine.toFixed(4)),
-    hydroplaneFactor: Number(hydroplaneFactor.toFixed(4)),
-    effectiveSurfaceGrip,
-  };
-}
-
-export function updateWeather(
-  weather: WeatherState,
-  dt: number,
-  raceElapsedMs: number,
-  track?: TrackSpec,
-  vehicles?: VehiclePhysicsState[]
-): void {
+export function updateWeather(weather: WeatherState, dt: number, raceElapsedMs: number): void {
   if (weather.condition === 'dynamic') {
     const raceSec = raceElapsedMs / 1000;
     if (raceSec < 35) {
       weather.activeType = 'overcast';
       weather.wetness = clamp(weather.wetness + dt * 0.015, 0.15, 0.4);
       weather.rainIntensity = clamp(weather.rainIntensity + dt * 0.02, 0.05, 0.35);
+      weather.gripMultiplier = 0.92 - weather.wetness * 0.2;
     } else if (raceSec < 95) {
       weather.activeType = 'rain';
       weather.wetness = clamp(weather.wetness + dt * 0.025, 0.4, 0.82);
       weather.rainIntensity = clamp(weather.rainIntensity + dt * 0.03, 0.4, 0.85);
-    } else if (raceSec < 145) {
+      weather.gripMultiplier = 0.88 - weather.wetness * 0.22;
+    } else {
       weather.activeType = 'storm';
       weather.wetness = clamp(weather.wetness + dt * 0.03, 0.82, 1.0);
       weather.rainIntensity = 1.0;
+      weather.gripMultiplier = 0.64;
       weather.lightningTimer -= dt;
       if (weather.lightningTimer <= 0) {
         weather.lightningTimer = 8 + Math.random() * 12;
       }
-    } else {
-      // Dynamic clearing sky after storm: rain subsides and track begins drying along racing line!
-      weather.activeType = 'overcast';
-      weather.rainIntensity = Math.max(0, weather.rainIntensity - dt * 0.08);
     }
   } else {
     let targetWet = 0;
     let targetRain = 0;
+    let targetGrip = 1.0;
     if (weather.condition === 'overcast') {
       targetWet = 0.08;
       targetRain = 0;
+      targetGrip = 0.96;
     } else if (weather.condition === 'rain') {
       targetWet = 0.72;
       targetRain = 0.75;
+      targetGrip = 0.74;
     } else if (weather.condition === 'storm') {
       targetWet = 1.0;
       targetRain = 1.0;
+      targetGrip = 0.62;
       weather.lightningTimer -= dt;
       if (weather.lightningTimer <= 0) {
         weather.lightningTimer = 7 + Math.random() * 10;
       }
     }
-    if (targetRain > weather.rainIntensity) {
-      weather.wetness += (targetWet - weather.wetness) * Math.min(1, dt * 1.5);
-    }
+    weather.wetness += (targetWet - weather.wetness) * Math.min(1, dt * 1.5);
     weather.rainIntensity += (targetRain - weather.rainIntensity) * Math.min(1, dt * 2.0);
+    weather.gripMultiplier += (targetGrip - weather.gripMultiplier) * Math.min(1, dt * 1.5);
   }
-
-  // Advance dynamic puddle formation and track drying in the physics loop
-  stepTrackPuddleAndDryingPhysics(weather, dt, track, vehicles);
 }
 
 /**
@@ -952,90 +694,88 @@ export function computeEffectiveCarStats(
   upgrades: CarUpgrades,
   tuning: HandlingTuning
 ): EffectiveCarStats {
-  const engBonus = (upgrades.engineLevel - 1) * 0.075;
-  const transBonus = (upgrades.transmissionLevel - 1) * 0.055;
-  const tireBonus = (upgrades.tiresLevel - 1) * 0.065;
-  const weightBonus = (upgrades.chassisWeightLevel - 1) * 0.04;
+  const engBonus = (upgrades.engineLevel - 1) * 0.065;
+  const transBonus = (upgrades.transmissionLevel - 1) * 0.045;
+  const tireBonus = (upgrades.tiresLevel - 1) * 0.055;
+  const weightBonus = (upgrades.chassisWeightLevel - 1) * 0.035;
 
   const powerHp = Math.round(car.baseStats.powerHp * (1 + engBonus));
   const weightKg = Math.round(car.baseStats.weightKg * (1 - weightBonus));
 
   const psiDelta = tuning.tirePressurePsi - 30.0;
-  const psiGripFactor = 1 - Math.abs(psiDelta) * 0.006 - (psiDelta > 0 ? psiDelta * 0.003 : 0);
+  const psiGripFactor = 1 - Math.abs(psiDelta) * 0.008 - (psiDelta > 0 ? psiDelta * 0.004 : 0);
   const psiRollingFactor = 1 - psiDelta * 0.006;
 
   const aeroNorm = tuning.aeroDownforce / 100;
-  const downforceFactor = 0.24 + aeroNorm * 0.62;
-  const aeroDragPenalty = aeroNorm * 0.09;
+  const downforceFactor = 0.18 + aeroNorm * 0.58;
+  const aeroDragPenalty = aeroNorm * 0.12;
 
   const ratioNorm = (tuning.finalDriveRatio - 3.55) / 0.95;
   const gearingTopSpeedMod = 1 - ratioNorm * 0.075;
-  const gearingAccelMod = 1 + ratioNorm * 0.105;
+  const gearingAccelMod = 1 + ratioNorm * 0.095;
 
   const rawTopSpeed =
     car.baseStats.topSpeedKmh *
-    (1 + engBonus * 0.45 + transBonus * 0.20 - aeroDragPenalty * 0.45) *
+    (1 + engBonus * 0.42 + transBonus * 0.18 - aeroDragPenalty * 0.55) *
     gearingTopSpeedMod *
     (2 - psiRollingFactor);
-  const topSpeedKmh = Math.round(clamp(rawTopSpeed, 240, 435));
+  const topSpeedKmh = Math.round(clamp(rawTopSpeed, 210, 365));
   const maxSpeedMs = topSpeedKmh / 3.6;
 
   const powerToWeight = powerHp / (weightKg / 1000);
   const basePtw = car.baseStats.powerHp / (car.baseStats.weightKg / 1000);
   const ptwRatio = powerToWeight / basePtw;
   const rawAccel =
-    (car.baseStats.accel0to100 / (ptwRatio * (1 + transBonus * 0.38) * gearingAccelMod)) *
-    (1 - tireBonus * 0.20);
-  const accel0to100Sec = Number(clamp(rawAccel, 2.1, 6.8).toFixed(2));
+    (car.baseStats.accel0to100 / (ptwRatio * (1 + transBonus * 0.35) * gearingAccelMod)) *
+    (1 - tireBonus * 0.18);
+  const accel0to100Sec = Number(clamp(rawAccel, 2.7, 7.5).toFixed(2));
 
   const stiffNorm = (tuning.suspensionStiffness - 5.5) / 4.5;
   const rawGripG =
     car.baseStats.lateralGripG *
-    (1 + tireBonus + weightBonus * 0.38) *
+    (1 + tireBonus + weightBonus * 0.35) *
     psiGripFactor *
-    (1 + aeroNorm * 0.18 + stiffNorm * 0.05);
-  const lateralGripG = Number(clamp(rawGripG, 1.15, 2.25).toFixed(2));
+    (1 + aeroNorm * 0.16 + stiffNorm * 0.04);
+  const lateralGripG = Number(clamp(rawGripG, 0.9, 1.85).toFixed(2));
 
   const biasDelta = Math.abs(tuning.brakeBiasFront - 58);
-  const biasEfficiency = 1 - biasDelta * 0.006;
+  const biasEfficiency = 1 - biasDelta * 0.008;
   const rawBrakingG =
     car.baseStats.brakingG *
-    (1 + tireBonus * 0.75 + weightBonus * 0.42) *
+    (1 + tireBonus * 0.7 + weightBonus * 0.4) *
     biasEfficiency *
-    (1 + aeroNorm * 0.12);
-  const brakingG = Number(clamp(rawBrakingG, 1.15, 2.35).toFixed(2));
+    (1 + aeroNorm * 0.1);
+  const brakingG = Number(clamp(rawBrakingG, 0.95, 1.95).toFixed(2));
 
-  // Higher engine thrust and lower drag so cars achieve higher top speeds effortlessly
-  const engineForceN = powerHp * 48.0 * (1 + transBonus * 0.28) * gearingAccelMod;
-  const brakeForceN = weightKg * 9.81 * brakingG * 1.75;
-  const dragFactor = car.baseStats.dragCoeff * (1 + aeroDragPenalty) * psiRollingFactor * 0.30;
+  const engineForceN = powerHp * 38.5 * (1 + transBonus * 0.25) * gearingAccelMod;
+  const brakeForceN = weightKg * 9.81 * brakingG * 1.45;
+  const dragFactor = car.baseStats.dragCoeff * (1 + aeroDragPenalty) * psiRollingFactor * 0.42;
 
   const diffNorm = (tuning.diffLockAccel - 45) / 40;
   const brakeRearBias = (58 - tuning.brakeBiasFront) / 12;
   const oversteerBias = clamp(
-    1.0 + diffNorm * 0.18 + stiffNorm * 0.08 + brakeRearBias * 0.10 - aeroNorm * 0.08,
-    0.72,
-    1.32
+    1.0 + diffNorm * 0.22 + stiffNorm * 0.1 + brakeRearBias * 0.12 - aeroNorm * 0.08,
+    0.65,
+    1.45
   );
 
   let balanceLabel: 'Understeer' | 'Neutral-Balanced' | 'Oversteer-Agile' = 'Neutral-Balanced';
   if (oversteerBias < 0.92) balanceLabel = 'Understeer';
   else if (oversteerBias > 1.08) balanceLabel = 'Oversteer-Agile';
 
-  // Higher corner stiffness & turn-in rate for responsive, easy-to-control handling
-  const cornerStiffness = lateralGripG * 5.8;
+  const cornerStiffness = lateralGripG * 4.4;
   const turnInRate =
-    (3.25 / car.baseStats.wheelbaseM) *
+    (2.85 / car.baseStats.wheelbaseM) *
     (1 + stiffNorm * 0.14 + (psiDelta > 0 ? psiDelta * 0.015 : 0));
-  const bodyRollFactor = clamp(1.25 - (tuning.suspensionStiffness - 1) * 0.10, 0.25, 1.25);
+  const bodyRollFactor = clamp(1.35 - (tuning.suspensionStiffness - 1) * 0.11, 0.25, 1.35);
 
   const performanceIndex = Math.round(
     clamp(
-      (powerToWeight / 300) * 235 +
-        (lateralGripG / 1.3) * 175 +
+      (powerToWeight / 300) * 250 +
+        (lateralGripG / 1.3) * 180 +
         (brakingG / 1.3) * 110 +
-        (topSpeedKmh / 290) * 125,
-      400,
+        (topSpeedKmh / 280) * 120,
+      350,
       999
     )
   );
@@ -1100,7 +840,6 @@ export function createInitialVehicleState(params: {
   const exactLookup = findClosestTrackSample(track, x, z, slotSampleIdx);
   const y = exactLookup.surfaceY;
   const yaw = Math.atan2(sample.tx, sample.tz);
-  const initialTires = createInitialTireState(resolvedCompound, tireWearMultiplier);
 
   return {
     id,
@@ -1115,6 +854,7 @@ export function createInitialVehicleState(params: {
     yaw,
     vx: 0,
     vz: 0,
+    vy: 0,
     speedMs: 0,
     lateralSpeedMs: 0,
     angularVelocity: 0,
@@ -1127,6 +867,11 @@ export function createInitialVehicleState(params: {
     pitchRad: exactLookup.slopePitchRad,
     rollRad: exactLookup.bankRollRad,
     slipAngleRad: 0,
+    suspensionOffsetM: 0,
+    verticalLoadG: 1.0,
+    asphaltGripFactor: 1.0,
+    onKerb: false,
+    kerbVibration: 0,
     isDrifting: false,
     isOffTrack: false,
     isDrafting: false,
@@ -1148,28 +893,22 @@ export function createInitialVehicleState(params: {
     aiReactionTimer: 0,
     damage: createInitialDamageState(),
     aquaplaningTimer: 0,
-    tires: initialTires,
+    tires: createInitialTireState(resolvedCompound, tireWearMultiplier),
     nitroCharge: 100,
     isBoosting: false,
     onRacingLine: Math.abs(lateralLane - sample.racingLineOffset) <= 1.85,
     onMarbles: false,
     lineGripModifier: 1.0,
     frontBrakeGlow: 0,
-    surfaceGripParams: {
-      surfaceWetness: 0,
-      puddleDepth: 0,
-      trackDryingLine: 1.0,
-      hydroplaneFactor: 0,
-      effectiveSurfaceGrip: Number((track.surfaceGrip * initialTires.gripMultiplier).toFixed(4)),
-    },
   };
 }
 
 /**
  * Advances a single vehicle's physics state by `dt` seconds (clamped <= 0.05s)
- * with dynamic puddle formation & track drying in real time, 4-corner tire wear/temperature/integrity,
- * Pit Stop service, track rubbering on-line grip bonus vs. off-line marbles,
- * exact 3D hilly road elevation locking, and smooth tangent-projected Armco guardrail deflection.
+ * with dynamic 4-corner tire wear/temperature/integrity simulation, Pit Stop service,
+ * weather grip attenuation, track rubbering on-line grip bonus vs. off-line marbles,
+ * realistic 3D hill gravity, crest unloading / valley compression normal load G,
+ * serrated kerb rumble mechanics, and intuitive Pro-Assisted handling easiness.
  */
 export function stepVehiclePhysics(
   vehicle: VehiclePhysicsState,
@@ -1181,7 +920,8 @@ export function stepVehiclePhysics(
   weather?: WeatherState,
   _damageMode: DamageMode = 'off',
   rubberState?: TrackRubberState,
-  tireWearMultiplier = 1.0
+  tireWearMultiplier = 1.0,
+  handlingMode: HandlingMode = 'pro_assisted'
 ): {
   gearChanged: boolean;
   lapCompleted: boolean;
@@ -1205,6 +945,8 @@ export function stepVehiclePhysics(
   let wallContactY = vehicle.y;
   let wallContactZ = vehicle.z;
 
+  const isAssisted = vehicle.isPlayer && handlingMode === 'pro_assisted';
+
   if (!vehicle.tires) {
     vehicle.tires = createInitialTireState('medium', tireWearMultiplier);
   } else {
@@ -1223,6 +965,9 @@ export function stepVehiclePhysics(
   if (vehicle.tires.pitStopActive) {
     const pitLookup = findClosestTrackSample(track, vehicle.x, vehicle.z, vehicle.trackSampleIndex);
     vehicle.y = pitLookup.surfaceY;
+    vehicle.vy = 0;
+    vehicle.suspensionOffsetM = 0;
+    vehicle.verticalLoadG = 1.0;
     return {
       gearChanged: false,
       lapCompleted: false,
@@ -1242,22 +987,22 @@ export function stepVehiclePhysics(
   const wantsNitro = Boolean(!vehicle.finished && input.nitro && vehicle.nitroCharge > 1.5 && !input.backward);
   if (wantsNitro) {
     vehicle.isBoosting = true;
-    vehicle.nitroCharge = Math.max(0, vehicle.nitroCharge - dt * 26);
+    vehicle.nitroCharge = Math.max(0, vehicle.nitroCharge - dt * 28);
   } else {
     vehicle.isBoosting = false;
     const rechargeRate =
-      10.0 +
-      (vehicle.isDrifting ? 18.0 : 0) +
-      (vehicle.isDrafting ? 14.0 : 0) +
-      (vehicle.brake > 0.3 && vehicle.speedMs > 10 ? 12.0 : 0);
+      8.0 +
+      (vehicle.isDrifting ? 16.0 : 0) +
+      (vehicle.isDrafting ? 12.0 : 0) +
+      (vehicle.brake > 0.3 && vehicle.speedMs > 10 ? 10.0 : 0);
     vehicle.nitroCharge = Math.min(100, (vehicle.nitroCharge ?? 100) + dt * rechargeRate);
   }
 
   // Smooth throttle & brake inputs
   const targetThrottle = vehicle.finished ? 0.15 : input.forward || vehicle.isBoosting ? 1 : 0;
   const targetBrake = vehicle.finished ? 0.5 : input.backward ? 1 : 0;
-  vehicle.throttle += (targetThrottle - vehicle.throttle) * Math.min(1, dt * 18);
-  vehicle.brake += (targetBrake - vehicle.brake) * Math.min(1, dt * 20);
+  vehicle.throttle += (targetThrottle - vehicle.throttle) * Math.min(1, dt * 16);
+  vehicle.brake += (targetBrake - vehicle.brake) * Math.min(1, dt * 18);
   vehicle.handbrake = vehicle.finished ? false : input.handbrake;
 
   // Thermal Brake Disc Glow
@@ -1272,55 +1017,21 @@ export function stepVehiclePhysics(
     1.0
   );
 
-  // Track surface lookup
+  // Track surface lookup prior to steering so we know upcoming apex curvature and asphalt state
   const prevLookup = findClosestTrackSample(track, vehicle.x, vehicle.z, vehicle.trackSampleIndex);
   const roadHalfWidth = prevLookup.sample.width * 0.5;
   const absOffset = Math.abs(prevLookup.lateralOffset);
   vehicle.isOffTrack = absOffset > roadHalfWidth + 1.35;
+  vehicle.onKerb = !vehicle.isOffTrack && absOffset >= roadHalfWidth - 0.55 && absOffset <= roadHalfWidth + 1.35;
 
-  // Advance dynamic puddle formation & tire water dispersion on the track if weather is active
-  if (weather) {
-    stepTrackPuddleAndDryingPhysics(weather, dt, track, [vehicle]);
-  }
-
-  // Step Dynamic 4-Corner Tire Wear, Heat & Structural Integrity Simulation
-  stepTireSimulation(vehicle, track, dt, weather);
-  const tireGripMult = vehicle.tires.gripMultiplier;
-
-  // Evaluate real-time Tire Grip Surface Parameters (localized puddle depth, drying line, hydroplaning, effective grip)
-  const surfaceParams = evaluateSurfaceGripParameters(
-    vehicle,
-    track,
-    prevLookup.sample.index,
-    prevLookup.lateralOffset,
-    weather,
-    rubberState
-  );
-  vehicle.surfaceGripParams = surfaceParams;
-
-  // Evaluate Track Rubbering effect
-  const rubberEffect = evaluateTrackRubberEffect(
-    track,
-    prevLookup.sample.index,
-    prevLookup.lateralOffset,
-    rubberState,
-    surfaceParams.surfaceWetness
-  );
-  vehicle.onRacingLine = rubberEffect.onRacingLine;
-  vehicle.onMarbles = rubberEffect.onMarbles;
-  vehicle.lineGripModifier = rubberEffect.lineGripModifier;
-
-  // Aquaplaning timer driven by real-time localized puddle hydroplaning factor
-  if (surfaceParams.hydroplaneFactor > 0.12) {
-    vehicle.aquaplaningTimer = Math.min(
-      1.0,
-      vehicle.aquaplaningTimer + dt * (0.6 + surfaceParams.hydroplaneFactor * 1.4)
-    );
+  // Serrated apex kerb harmonic vibration
+  if (vehicle.onKerb && vehicle.speedMs > 3) {
+    vehicle.kerbVibration = Math.sin(vehicle.totalRaceDistanceM * 4.2) * clamp(vehicle.speedMs / 32, 0.25, 1.0);
   } else {
-    vehicle.aquaplaningTimer = Math.max(0, vehicle.aquaplaningTimer - dt * 2.6);
+    vehicle.kerbVibration = 0;
   }
 
-  // Steering input with progressive speed-sensitive authority & strong auto-stabilizing counter-steer assist
+  // Steering input with progressive speed-sensitive authority, caster self-centering & apex turn-in easiness
   const digitalSteer = (input.left ? 1 : 0) - (input.right ? 1 : 0);
   const rawSteer =
     input.steerAxis !== undefined && Math.abs(input.steerAxis) > 0.01
@@ -1328,27 +1039,59 @@ export function stepVehiclePhysics(
       : digitalSteer;
   const speedRatio = clamp(vehicle.speedMs / stats.maxSpeedMs, 0, 1.1);
 
-  const aquaSteerPenalty = 1.0 - surfaceParams.hydroplaneFactor * 0.38;
+  // Aquaplaning check in heavy standing water (Wet Pioggia tires channel water and cut aquaplaning by 75%!)
+  const wetness = weather ? weather.wetness : 0;
+  const weatherGripMult = weather ? weather.gripMultiplier : 1.0;
+  const isWetTire = vehicle.tires.compound === 'wet';
+  if (wetness > 0.55 && vehicle.speedMs > 44 && !isWetTire) {
+    vehicle.aquaplaningTimer = Math.min(1.0, vehicle.aquaplaningTimer + dt * 0.9);
+  } else {
+    vehicle.aquaplaningTimer = Math.max(0, vehicle.aquaplaningTimer - dt * 2.2);
+  }
+
+  const aquaSteerPenalty = 1.0 - vehicle.aquaplaningTimer * 0.55;
+  // Front tire wear / integrity slightly softens turn-in crispness
   const frontTireHealth =
     (vehicle.tires.fl.treadLife + vehicle.tires.fr.treadLife) * 0.25 +
     (vehicle.tires.fl.structuralIntegrity + vehicle.tires.fr.structuralIntegrity) * 0.25;
-  const frontTurnInFactor = 0.86 + 0.14 * frontTireHealth;
+  const frontTurnInFactor = 0.85 + 0.15 * frontTireHealth;
 
   const maxSteerRad =
     0.46 *
-    (1 - speedRatio * 0.30) *
-    (stats.turnInRate / 1.18) *
+    (1 - speedRatio * (isAssisted ? 0.38 : 0.35)) *
+    (stats.turnInRate / 1.08) *
     aquaSteerPenalty *
     frontTurnInFactor;
 
-  // Enhanced self-aligning caster & yaw stability assist so handling is intuitive and forgiving
+  // Intuitive Caster Counter-Steer & Slip-Angle Catch Assist (opposes excessive slip angle to prevent spinouts)
+  const assistGain = isAssisted ? 0.48 : 0.28;
+  const maxAssistRad = isAssisted ? 0.24 : 0.15;
   const driftAssistSteer =
-    vehicle.isPlayer && Math.abs(vehicle.slipAngleRad) > 0.045
-      ? clamp(-vehicle.slipAngleRad * 0.44, -0.22, 0.22)
+    vehicle.isPlayer && Math.abs(vehicle.slipAngleRad) > 0.05 && !vehicle.handbrake
+      ? clamp(vehicle.slipAngleRad * assistGain, -maxAssistRad, maxAssistRad)
       : 0;
 
-  const targetSteer = clamp(rawSteer * maxSteerRad + driftAssistSteer, -0.54, 0.54);
-  const steerLerpRate = Math.abs(rawSteer) < 0.05 ? 25 : 18;
+  // Subtle Track-Tangent Alignment & Apex Guidance when cruising on-track in Assisted mode
+  let tangentGuideSteer = 0;
+  if (isAssisted && !vehicle.isOffTrack && vehicle.speedMs > 8) {
+    const trackYaw = Math.atan2(prevLookup.tx, prevLookup.tz);
+    const headingErr = normalizeAngle(trackYaw - vehicle.yaw);
+    if (Math.abs(rawSteer) < 0.05 && Math.abs(headingErr) < 0.38) {
+      // Gently self-align down straights and gentle sweepers when no steering key is pressed
+      tangentGuideSteer = clamp(headingErr * 0.34, -0.09, 0.09);
+    } else if (Math.abs(rawSteer) > 0.1 && Math.sign(rawSteer) === Math.sign(prevLookup.sample.curvature)) {
+      // Smooth apex turn-in help when steering into a corner
+      tangentGuideSteer = clamp(prevLookup.sample.curvature * 2.8, -0.06, 0.06);
+    }
+  }
+
+  const targetSteer = clamp(
+    rawSteer * maxSteerRad + driftAssistSteer + tangentGuideSteer,
+    -0.54,
+    0.54
+  );
+  // Progressive steering filter: crisp, non-twitchy initial turn-in and rapid self-centering release
+  const steerLerpRate = Math.abs(rawSteer) < 0.05 ? 26 : isAssisted ? 16.5 : 15;
   vehicle.steerAngle += (targetSteer - vehicle.steerAngle) * Math.min(1, dt * steerLerpRate);
 
   const fx = Math.sin(vehicle.yaw);
@@ -1359,10 +1102,76 @@ export function stepVehiclePhysics(
   let forwardVel = vehicle.vx * fx + vehicle.vz * fz;
   let lateralVel = vehicle.vx * rx + vehicle.vz * rz;
 
-  // Real-time Surface Grip + Aero Downforce Grip
+  // Step Dynamic 4-Corner Tire Wear, Heat & Structural Integrity Simulation
+  stepTireSimulation(vehicle, track, dt, weather);
+  const tireGripMult = vehicle.tires.gripMultiplier;
+
+  // Evaluate Track Rubbering effect
+  const rubberEffect = evaluateTrackRubberEffect(
+    track,
+    prevLookup.sample.index,
+    prevLookup.lateralOffset,
+    rubberState,
+    wetness
+  );
+  vehicle.onRacingLine = rubberEffect.onRacingLine;
+  vehicle.onMarbles = rubberEffect.onMarbles;
+  vehicle.lineGripModifier = rubberEffect.lineGripModifier;
+
+  // 3D Vertical Gravity & Road Crest/Compression Normal Load Factor
+  // Over blind crests (verticalCurvature < 0), centrifugal vertical acceleration unloads the suspension (< 1.0G);
+  // In valley compressions (verticalCurvature > 0) and banked bowls, gravity + normal force press tires into the tarmac (> 1.0G).
+  const vCurv = prevLookup.sample.verticalCurvature ?? 0;
+  const slopeCos = Math.sqrt(Math.max(0.7, 1 - prevLookup.sample.ty * prevLookup.sample.ty));
+  const verticalCentrifugalG = (forwardVel * forwardVel * vCurv) / 9.81;
+  const bankingNormalBonus = Math.abs(Math.sin(prevLookup.sample.bankingRad)) * speedRatio * 0.16;
+  const aeroNormalLoadG = speedRatio * speedRatio * stats.downforceFactor * 0.42;
+
+  const rawVerticalLoadG = clamp(
+    slopeCos + verticalCentrifugalG * 4.5 + bankingNormalBonus + aeroNormalLoadG,
+    0.45,
+    1.85
+  );
+  vehicle.verticalLoadG = Number(
+    ((vehicle.verticalLoadG ?? 1.0) + (rawVerticalLoadG - (vehicle.verticalLoadG ?? 1.0)) * Math.min(1, dt * 14)).toFixed(3)
+  );
+
+  // Tire load sensitivity: normal force increases asphalt bite (with realistic diminishing returns at very high load)
+  const gravityNormalGripMod = clamp(
+    0.84 + (vehicle.verticalLoadG - 0.75) * 0.24,
+    0.76,
+    1.22
+  );
+
+  // Asphalt micro-macro texture & camber bite: crowned road camber helps when turning toward the crown
+  const crownSlopeSign = -Math.sign(prevLookup.lateralOffset || 0.01);
+  const camberGripBonus =
+    Math.abs(vehicle.steerAngle) > 0.02 && Math.sign(vehicle.steerAngle) === crownSlopeSign
+      ? 1.035
+      : 1.0;
+
+  // Serrated Kerb grip modifier (dry concrete kerbs have 95% grip; wet painted kerbs are slicker at 82%)
+  const kerbGripMod = vehicle.onKerb ? (wetness > 0.3 ? 0.84 : 0.96) : 1.0;
+
+  // Effective weather grip: Wet compound tires negate most of the rain grip loss!
+  const effectiveWeatherGrip = isWetTire
+    ? Math.max(weatherGripMult, 1.0 - wetness * 0.12)
+    : weatherGripMult;
+
+  // Combined Asphalt Mechanics + Gravity Normal Load + Tire Compound/Wear/Temp + Track Rubbering + Handling Assist Bonus
+  const assistGripBonus = isAssisted ? 1.12 : 1.0;
   const surfaceGrip =
-    surfaceParams.effectiveSurfaceGrip *
-    (1 + speedRatio * speedRatio * stats.downforceFactor * 0.52);
+    track.surfaceGrip *
+    effectiveWeatherGrip *
+    tireGripMult *
+    rubberEffect.lineGripModifier *
+    gravityNormalGripMod *
+    camberGripBonus *
+    kerbGripMod *
+    assistGripBonus *
+    (vehicle.isOffTrack ? 0.76 : 1.0);
+
+  vehicle.asphaltGripFactor = Number(surfaceGrip.toFixed(3));
 
   // 5-speed classic gearbox
   const gearMaxSpeeds = [
@@ -1370,7 +1179,7 @@ export function stepVehiclePhysics(
     stats.maxSpeedMs * 0.43,
     stats.maxSpeedMs * 0.63,
     stats.maxSpeedMs * 0.82,
-    stats.maxSpeedMs * 1.04,
+    stats.maxSpeedMs * 1.02,
   ];
   let newGear = 1;
   const absSpeed = Math.abs(forwardVel);
@@ -1388,27 +1197,28 @@ export function stepVehiclePhysics(
   const gearCeil = gearMaxSpeeds[vehicle.gear - 1];
   const gearProgress = clamp((absSpeed - gearFloor) / Math.max(1, gearCeil - gearFloor), 0, 1);
   const targetRpm =
-    1450 + gearProgress * 6650 + vehicle.throttle * 380 + (vehicle.isBoosting ? 460 : 0);
-  vehicle.rpm += (targetRpm - vehicle.rpm) * Math.min(1, dt * 18);
+    1450 + gearProgress * 6650 + vehicle.throttle * 380 + (vehicle.isBoosting ? 420 : 0);
+  vehicle.rpm += (targetRpm - vehicle.rpm) * Math.min(1, dt * 16);
 
   const rpmNorm = (vehicle.rpm - 1200) / 7000;
-  const torqueCurve = 0.86 + Math.sin(clamp(rpmNorm, 0.05, 0.98) * Math.PI) * 0.36;
-  const gearMultipliers = [1.68, 1.35, 1.12, 0.98, 0.88];
+  const torqueCurve = 0.82 + Math.sin(clamp(rpmNorm, 0.05, 0.98) * Math.PI) * 0.34;
+  const gearMultipliers = [1.62, 1.30, 1.08, 0.94, 0.84];
   const gearMult = gearMultipliers[vehicle.gear - 1] ?? 1.0;
 
   let driveForce = 0;
   if (forwardVel >= -0.5 && vehicle.throttle > 0.01) {
-    const draftBoost = vehicle.isDrafting ? 1.16 : 1.0;
-    const nitroBoostMult = vehicle.isBoosting ? 1.48 : 1.0;
+    const draftBoost = vehicle.isDrafting ? 1.14 : 1.0;
+    const nitroBoostMult = vehicle.isBoosting ? 1.44 : 1.0;
     const lineTractionMod = vehicle.onRacingLine
       ? Math.max(1.0, rubberEffect.lineGripModifier)
       : vehicle.onMarbles
-      ? 0.95
+      ? 0.94
       : 1.0;
+    // Worn rear tires lose longitudinal launch/exit traction, modulated by gravity normal load
     const rearTireTraction = clamp(
-      0.72 + 0.32 * surfaceParams.effectiveSurfaceGrip,
-      0.66,
-      1.18
+      (0.70 + 0.32 * tireGripMult) * clamp(vehicle.verticalLoadG, 0.78, 1.18),
+      0.64,
+      1.16
     );
     driveForce +=
       stats.engineForceN *
@@ -1422,37 +1232,46 @@ export function stepVehiclePhysics(
   }
 
   if (vehicle.brake > 0.01) {
+    // Anti-Lock Braking Modulation (ABS-like stability under heavy braking while turning in Pro-Assisted mode)
+    const steerLoad = Math.abs(vehicle.steerAngle) / 0.45;
+    const absEfficiency = isAssisted ? 1.0 - steerLoad * 0.06 : 1.0 - steerLoad * 0.14;
     const brakingTireEfficiency =
-      (0.80 + 0.24 * surfaceParams.effectiveSurfaceGrip) *
+      (0.78 + 0.24 * effectiveWeatherGrip) *
       rubberEffect.lineGripModifier *
-      clamp(0.76 + 0.26 * tireGripMult, 0.70, 1.15);
+      clamp(0.74 + 0.28 * tireGripMult, 0.68, 1.12) *
+      clamp(vehicle.verticalLoadG, 0.75, 1.2) *
+      absEfficiency;
     if (forwardVel > 1.0) {
       driveForce -= stats.brakeForceN * vehicle.brake * brakingTireEfficiency;
     } else {
-      driveForce -= stats.engineForceN * 0.52 * vehicle.brake;
+      driveForce -= stats.engineForceN * 0.48 * vehicle.brake;
     }
   }
 
   if (vehicle.handbrake && Math.abs(forwardVel) > 0.5) {
-    driveForce -= Math.sign(forwardVel) * stats.brakeForceN * 0.54;
+    driveForce -= Math.sign(forwardVel) * stats.brakeForceN * 0.52;
   }
 
   const aeroDrag =
     stats.dragFactor *
     forwardVel *
     Math.abs(forwardVel) *
-    (vehicle.isDrafting ? 0.74 : 1.0) *
-    (vehicle.isBoosting ? 0.80 : 1.0);
-  // Standing water puddles & degraded tire integrity add hydrodynamic rolling resistance
-  const tireIntegrityDrag = (1.0 - vehicle.tires.minIntegrity) * 210;
-  const puddleWaterDrag = surfaceParams.puddleDepth * 240;
+    (vehicle.isDrafting ? 0.76 : 1.0) *
+    (vehicle.isBoosting ? 0.84 : 1.0);
+  // Degraded tire structural integrity increases rolling resistance slightly
+  const tireIntegrityDrag = (1.0 - vehicle.tires.minIntegrity) * 260;
+  // Forgiving off-track rolling resistance so dipping 2 wheels onto the grass verge never bogs the car down harshly
+  const offTrackPenalty = vehicle.isOffTrack ? (isAssisted ? 780 : 1150) : 0;
   const rollingRes =
-    (vehicle.isOffTrack
-      ? 580
-      : (vehicle.onMarbles ? 260 : 175) + surfaceParams.surfaceWetness * 130 + puddleWaterDrag + tireIntegrityDrag) *
+    (offTrackPenalty > 0
+      ? offTrackPenalty
+      : (vehicle.onMarbles ? 310 : vehicle.onKerb ? 245 : 215) + wetness * 165 + tireIntegrityDrag) *
     forwardVel;
-  // Smooth 3D hill gravity force
-  const slopeGravity = -stats.weightKg * 9.81 * prevLookup.sample.ty * 0.34;
+
+  // Authentic 3D Hill Gravity Force: uphill climbs pull against momentum, downhill descents accelerate with true gravitational weight
+  const headingDotSlope = fx * prevLookup.tx + fz * prevLookup.tz;
+  const effectiveSlopeSin = prevLookup.sample.ty * headingDotSlope;
+  const slopeGravity = -stats.weightKg * 9.81 * effectiveSlopeSin * 0.68;
 
   const netLongitudinalForce = driveForce - aeroDrag - rollingRes + slopeGravity;
   const longAccel = netLongitudinalForce / stats.weightKg;
@@ -1460,28 +1279,34 @@ export function stepVehiclePhysics(
   forwardVel += longAccel * dt;
   const maxAllowedSpeed =
     stats.maxSpeedMs *
-    (vehicle.isDrafting ? 1.06 : 1.0) *
-    (vehicle.isBoosting ? 1.14 : 1.0);
-  forwardVel = clamp(forwardVel, -16, maxAllowedSpeed);
+    (vehicle.isDrafting ? 1.05 : 1.0) *
+    (vehicle.isBoosting ? 1.12 : 1.0);
+  forwardVel = clamp(forwardVel, -15, maxAllowedSpeed);
 
-  // Cornering Yaw Rate & Easy-Handling Stability Balance
+  // Cornering Yaw Rate, Traction Control & Tire Wear Oversteer Balance
   const minSteerSpeed = Math.min(1.0, Math.abs(forwardVel) / 2.4);
   const directionSign = forwardVel >= -0.2 ? 1 : -1;
-  const handbrakeOversteer = vehicle.handbrake ? 1.65 : 1.0;
+  const handbrakeOversteer = vehicle.handbrake ? 1.75 : 1.0;
   const trailBrakeRotation =
     vehicle.brake > 0.12 && Math.abs(vehicle.steerAngle) > 0.03
-      ? 1.0 + Math.min(0.18, vehicle.brake * 0.20)
+      ? 1.0 + Math.min(0.20, vehicle.brake * 0.22)
       : 1.0;
 
+  // Worn rear tires induce progressive power oversteer (attenuated by Traction Control in pro_assisted mode)
   const rearWearOversteer =
-    Math.max(0, 0.80 - (vehicle.tires.rl.treadLife + vehicle.tires.rr.treadLife) * 0.5) * 0.28;
+    Math.max(0, 0.85 - (vehicle.tires.rl.treadLife + vehicle.tires.rr.treadLife) * 0.5) *
+    (isAssisted ? 0.24 : 0.42);
   const wetOversteerMod =
     1.0 +
-    surfaceParams.puddleDepth * 0.28 +
-    (vehicle.onMarbles ? 0.16 : 0) +
+    (1.0 - effectiveWeatherGrip) * (isAssisted ? 0.28 : 0.48) +
+    (vehicle.onMarbles ? 0.18 : 0) +
     rearWearOversteer;
   const throttleOversteer =
-    1 + vehicle.throttle * (stats.oversteerBias - 1.0) * 0.30 * wetOversteerMod;
+    1 +
+    vehicle.throttle *
+      (stats.oversteerBias - 1.0) *
+      (isAssisted ? 0.25 : 0.40) *
+      wetOversteerMod;
 
   const targetAngularVel =
     vehicle.steerAngle *
@@ -1491,36 +1316,41 @@ export function stepVehiclePhysics(
     handbrakeOversteer *
     trailBrakeRotation *
     throttleOversteer *
-    (0.78 + 0.22 * surfaceGrip);
+    (0.76 + 0.24 * surfaceGrip);
 
   if (vehicle.handbrake && Math.abs(forwardVel) > 7 && Math.abs(vehicle.steerAngle) > 0.04) {
-    vehicle.angularVelocity += Math.sign(vehicle.steerAngle) * 3.1 * dt;
+    vehicle.angularVelocity += Math.sign(vehicle.steerAngle) * 3.2 * dt;
   }
 
   const isCounterSteering =
-    vehicle.slipAngleRad * vehicle.steerAngle < -0.01 && Math.abs(vehicle.slipAngleRad) > 0.06;
-  const yawDamping = isCounterSteering ? 28 : Math.abs(rawSteer) < 0.05 ? 23 : 18;
+    vehicle.slipAngleRad * vehicle.steerAngle < -0.01 && Math.abs(vehicle.slipAngleRad) > 0.07;
+  // Strong yaw stability damping prevents snap spinouts and makes catching slides effortless
+  const yawDamping = isCounterSteering ? 30 : Math.abs(rawSteer) < 0.05 ? 23 : isAssisted ? 18 : 15;
   vehicle.angularVelocity +=
     (targetAngularVel - vehicle.angularVelocity) * Math.min(1, dt * yawDamping);
   vehicle.yaw = normalizeAngle(vehicle.yaw + vehicle.angularVelocity * dt);
 
+  // Lateral slip & Pacejka-inspired tire cornering stiffness
   const centrifugalLateral =
     -vehicle.angularVelocity *
     forwardVel *
-    0.17 *
+    (isAssisted ? 0.21 : 0.25) *
     stats.oversteerBias *
-    (vehicle.handbrake ? 1.95 : 1.0);
-  lateralVel += centrifugalLateral * dt * 3.4;
+    (vehicle.handbrake ? 2.05 : 1.0);
+  lateralVel += centrifugalLateral * dt * 3.6;
 
   const absSlip = Math.abs(vehicle.slipAngleRad);
   const pacejkaGripFactor =
-    absSlip < 0.22 ? 1.14 : Math.max(0.88, 1.14 - (absSlip - 0.22) * 0.48);
-  const handbrakeLateralGrip = vehicle.handbrake ? 0.28 : pacejkaGripFactor;
+    absSlip < 0.16
+      ? 1.08
+      : Math.max(isAssisted ? 0.82 : 0.74, 1.08 - (absSlip - 0.16) * (isAssisted ? 0.48 : 0.65));
+  const handbrakeLateralGrip = vehicle.handbrake ? 0.26 : pacejkaGripFactor;
   const lateralGripDamping = stats.cornerStiffness * surfaceGrip * handbrakeLateralGrip;
   lateralVel *= Math.exp(-lateralGripDamping * dt);
 
-  if (Math.abs(prevLookup.sample.bankingRad) > 0.01 && Math.abs(forwardVel) > 6) {
-    lateralVel -= Math.sin(prevLookup.sample.bankingRad) * 5.8 * dt;
+  // Lateral gravity component on banked corners & crowned asphalt pulls car toward the inside of banked turns
+  if (Math.abs(prevLookup.sample.bankingRad) > 0.008 && Math.abs(forwardVel) > 4) {
+    lateralVel -= Math.sin(prevLookup.sample.bankingRad) * 9.81 * 0.62 * dt;
   }
 
   const newFx = Math.sin(vehicle.yaw);
@@ -1590,7 +1420,7 @@ export function stepVehiclePhysics(
       const impactRatio = clamp(wallImpactSpeedMs / Math.max(1, vehicle.speedMs), 0, 1);
       // Gentle inward push away from barrier + smooth tangential glide
       const bouncedNorm = -sign * Math.max(0.85, wallImpactSpeedMs * 0.16);
-      const frictionLoss = clamp(1.0 - (0.02 + impactRatio * 0.09), 0.88, 0.985);
+      const frictionLoss = clamp(1.0 - (0.015 + impactRatio * 0.075), 0.90, 0.988);
       const retainedTang = vTang * frictionLoss;
 
       vehicle.vx = currLookup.tx * retainedTang + currLookup.rx * bouncedNorm;
@@ -1601,24 +1431,43 @@ export function stepVehiclePhysics(
       // Smoothly align vehicle heading parallel to the interpolated guardrail tangent so nose never digs in
       const trackYaw = Math.atan2(currLookup.tx, currLookup.tz);
       const yawDiff = normalizeAngle(trackYaw - vehicle.yaw);
-      vehicle.yaw = normalizeAngle(vehicle.yaw + yawDiff * (0.55 + impactRatio * 0.25));
-      vehicle.angularVelocity *= 0.2;
+      vehicle.yaw = normalizeAngle(vehicle.yaw + yawDiff * (0.60 + impactRatio * 0.25));
+      vehicle.angularVelocity *= 0.18;
     }
   }
 
-  // Exact road surface height locking (zero floating gap)
+  // Exact road surface height locking (zero floating gap) + 3D Suspension Heave Compression Dynamics
   const finalLookup = findClosestTrackSample(track, vehicle.x, vehicle.z, sample.index);
+  const prevSurfaceY = prevLookup.surfaceY;
   vehicle.y = finalLookup.surfaceY;
   wallContactY = vehicle.y + 0.42;
+
+  // Vertical velocity & spring-damper suspension compression over crests, dips, and kerbs
+  const newVy = (finalLookup.surfaceY - prevSurfaceY) / dt;
+  const verticalAccel = (newVy - (vehicle.vy ?? 0)) / dt;
+  vehicle.vy = newVy;
+
+  const targetSuspHeave = clamp(
+    -(vehicle.verticalLoadG - 1.0) * 0.028 -
+      clamp(verticalAccel * 0.0008, -0.025, 0.025) +
+      vehicle.kerbVibration * 0.011,
+    -0.048,
+    0.042
+  );
+  vehicle.suspensionOffsetM =
+    (vehicle.suspensionOffsetM ?? 0) +
+    (targetSuspHeave - (vehicle.suspensionOffsetM ?? 0)) * Math.min(1, dt * 22);
 
   const headingDotTangent = newFx * finalLookup.tx + newFz * finalLookup.tz;
   const effectiveSlopePitch = finalLookup.slopePitchRad * headingDotTangent;
 
-  const suspPitch = clamp(-longAccel * 0.0014 * stats.bodyRollFactor, -0.024, 0.024);
+  // Longitudinal squat under acceleration / nose-dive under braking + lateral body roll
+  const suspPitch = clamp(-longAccel * 0.0018 * stats.bodyRollFactor, -0.032, 0.032);
   const suspRoll = clamp(
-    vehicle.angularVelocity * forwardVel * 0.0015 * stats.bodyRollFactor,
-    -0.055,
-    0.055
+    vehicle.angularVelocity * forwardVel * 0.0017 * stats.bodyRollFactor +
+      vehicle.kerbVibration * 0.012,
+    -0.062,
+    0.062
   );
   const targetPitch = effectiveSlopePitch + suspPitch;
   const targetRoll = finalLookup.bankRollRad * headingDotTangent + suspRoll;
