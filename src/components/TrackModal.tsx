@@ -54,11 +54,11 @@ export const TrackModal: React.FC<TrackModalProps> = ({
     <div
       role="dialog"
       aria-label="Select Championship Circuit"
-      className="fixed inset-0 z-30 flex items-center justify-center p-4 md:p-8 pointer-events-auto"
+      className="animate-backdrop-in fixed inset-0 z-30 flex items-center justify-center p-4 md:p-8 pointer-events-auto"
       style={{ backgroundColor: 'rgba(9, 11, 16, 0.86)' }}
     >
       <div
-        className="w-full max-w-5xl rounded border border-[#f5f2eb]/20 p-6 space-y-6 max-h-[90vh] overflow-y-auto"
+        className="animate-modal-in w-full max-w-5xl rounded border border-[#f5f2eb]/20 p-6 space-y-6 max-h-[90vh] overflow-y-auto"
         style={{ backgroundColor: '#0e131d' }}
       >
         <div className="flex items-center justify-between border-b border-[#f5f2eb]/15 pb-4">

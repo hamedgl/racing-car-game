@@ -89,11 +89,11 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
     <div
       role="dialog"
       aria-label="Global Multiplayer Leaderboards"
-      className="fixed inset-0 z-30 flex items-center justify-center p-4 md:p-8 pointer-events-auto"
+      className="animate-backdrop-in fixed inset-0 z-30 flex items-center justify-center p-4 md:p-8 pointer-events-auto"
       style={{ backgroundColor: 'rgba(9, 9, 11, 0.86)' }}
     >
       <div
-        className="w-full max-w-4xl rounded border border-[#f5f2eb]/20 p-6 space-y-5 max-h-[90vh] overflow-y-auto"
+        className="animate-modal-in w-full max-w-4xl rounded border border-[#f5f2eb]/20 p-6 space-y-5 max-h-[90vh] overflow-y-auto"
         style={{ backgroundColor: '#121110' }}
       >
         {/* Header */}

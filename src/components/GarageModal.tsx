@@ -92,7 +92,7 @@ export const GarageModal: React.FC<GarageModalProps> = ({
     <div
       role="dialog"
       aria-label="Garage, Livery & Handling Tuning Workshop"
-      className="fixed inset-y-0 left-0 z-30 w-full max-w-xl p-4 md:p-6 flex flex-col justify-between pointer-events-auto border-r border-[#f5f2eb]/15 overflow-y-auto"
+      className="animate-modal-in fixed inset-y-0 left-0 z-30 w-full max-w-xl p-4 md:p-6 flex flex-col justify-between pointer-events-auto border-r border-[#f5f2eb]/15 overflow-y-auto"
       style={{ backgroundColor: 'rgba(13, 12, 11, 0.95)' }}
     >
       <div className="space-y-5">
@@ -106,7 +106,7 @@ export const GarageModal: React.FC<GarageModalProps> = ({
               {selectedCar.name} · Balance:{' '}
               <span className="text-[#f59e0b] font-semibold">{effectiveStats.balanceLabel}</span> ·{' '}
               <span className="font-mono-tabular text-[#f59e0b] font-semibold">
-                {credits.toLocaleString()} CR
+                ∞ UNLIMITED CR
               </span>
             </p>
           </div>
@@ -451,7 +451,7 @@ export const GarageModal: React.FC<GarageModalProps> = ({
               const currentLvl = upgrades[sys.key];
               const cost = getUpgradeCost(currentLvl);
               const isMax = currentLvl >= 5;
-              const canAfford = !isMax && credits >= cost;
+              const canAfford = !isMax && credits >= 0;
 
               return (
                 <div

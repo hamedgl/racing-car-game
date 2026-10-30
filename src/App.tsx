@@ -27,7 +27,6 @@ import {
   CLASSIC_CARS,
   DEFAULT_TUNING,
   DEFAULT_UPGRADES,
-  getUpgradeCost,
   TUNING_PRESETS,
 } from './game/cars';
 import { CHAMPIONSHIP_LEVELS, TRACKS } from './game/tracks';
@@ -156,8 +155,8 @@ export default function App() {
     setPitRequestArmed(false);
   }, []);
 
-  // Start with 4,800 Championship Credits so players can immediately test upgrades
-  const [credits, setCredits] = useState<number>(4800);
+  // Unlimited Championship Credits (CR) enabled so players can freely upgrade and test all classic cars
+  const [credits, setCredits] = useState<number>(9999999);
   const [driverName, setDriverName] = useState<string>('T. Nuvolari');
 
   const [raceResetTrigger, setRaceResetTrigger] = useState<number>(0);
@@ -501,17 +500,19 @@ export default function App() {
   ]);
 
   const handleBuyUpgrade = (system: keyof CarUpgrades) => {
-    const currLvl = activeUpgrades[system];
-    const cost = getUpgradeCost(currLvl);
-    if (currLvl >= 5 || credits < cost) return;
-    setCredits((prev) => prev - cost);
-    setUpgradesMap((prev) => ({
-      ...prev,
-      [selectedCar.id]: {
-        ...activeUpgrades,
-        [system]: currLvl + 1,
-      },
-    }));
+    setCredits(9999999);
+    setUpgradesMap((prev) => {
+      const currentCarUpgrades = prev[selectedCar.id] || DEFAULT_UPGRADES;
+      const currLvl = currentCarUpgrades[system];
+      if (currLvl >= 5) return prev;
+      return {
+        ...prev,
+        [selectedCar.id]: {
+          ...currentCarUpgrades,
+          [system]: currLvl + 1,
+        },
+      };
+    });
   };
 
   return (
