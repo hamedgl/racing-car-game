@@ -1,0 +1,6 @@
+{
+  "name": "Mille Corse: Historic GT Racing",
+  "description": "3D classic car racing simulator with realistic handling physics, custom vintage liveries, mechanical upgrades, deep suspension tuning, AI rivals, and live multiplayer leaderboards.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
