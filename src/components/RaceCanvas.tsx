@@ -1429,23 +1429,23 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
           );
           camera.lookAt(_camLookAt);
         } else if (camMode === 'cockpit') {
-          // Unobstructed panoramic first-person driver cockpit view:
-          // Strictly aligned on the driver's column centerline (x = 0.190) at true driver eye height
-          // so the upper steering wheel window frames the Speedometer, Tachometer, and 3-stage shift lights with zero overlap!
-          const baseEyeH = pCarSpec.bodyStyle === 'detroit_proto' ? 0.752 : 0.812;
+          // Elevated, unobstructed panoramic first-person driver cockpit view:
+          // Strictly aligned on the driver's column centerline (x = 0.190) at raised driver eye height
+          // so the Speedometer, Tachometer, 3-stage shift lights, and auxiliary dials sit 100% unobstructed above the steering wheel!
+          const baseEyeH = pCarSpec.bodyStyle === 'detroit_proto' ? 0.795 : 0.855;
           const suspHeave = (player.suspensionOffsetM ?? 0) * 0.55;
           const headLatSway = Math.max(-0.020, Math.min(0.020, -player.angularVelocity * 0.010));
           const longGShift = (player.brake - player.throttle) * 0.014;
           const eyeY = player.y + baseEyeH + suspHeave;
           const driverLineX = 0.190 + headLatSway;
           camera.position.set(
-            player.x - fx * (0.265 - longGShift) + rx * driverLineX,
+            player.x - fx * (0.258 - longGShift) + rx * driverLineX,
             eyeY,
-            player.z - fz * (0.265 - longGShift) + rz * driverLineX
+            player.z - fz * (0.258 - longGShift) + rz * driverLineX
           );
           _camLookAt.set(
             player.x + fx * 18 + rx * (0.190 + headLatSway * 0.4),
-            eyeY - 0.18 - player.pitchRad * 6.0 - longGShift * 1.8,
+            eyeY - 0.30 - player.pitchRad * 6.0 - longGShift * 1.8,
             player.z + fz * 18 + rz * (0.190 + headLatSway * 0.4)
           );
           camera.lookAt(_camLookAt);

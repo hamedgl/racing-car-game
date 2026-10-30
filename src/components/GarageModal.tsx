@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   CarLivery,
   CarUpgrades,
@@ -16,6 +16,14 @@ import {
   STRIPE_SWATCHES,
   TUNING_PRESETS,
 } from '../game/cars';
+import {
+  getCarBlueprintPng,
+  getDynoAndChassisTelemetryPng,
+  getLiveryPatternPreviewPng,
+  getMarqueCrestPng,
+  getUpgradePartSchematicPng,
+  getWheelFinishPreviewPng,
+} from '../game/assets';
 
 interface GarageModalProps {
   selectedCar: ClassicCarSpec;
@@ -56,6 +64,32 @@ export const GarageModal: React.FC<GarageModalProps> = ({
 }) => {
   const [tab, setTab] = useState<GarageTab>('cars');
 
+  const activeMarqueCrest = useMemo(
+    () => getMarqueCrestPng(selectedCar.id),
+    [selectedCar.id]
+  );
+
+  const liveryPatternPreview = useMemo(
+    () =>
+      getLiveryPatternPreviewPng(
+        livery.stripeStyle,
+        livery.bodyColor,
+        livery.stripeColor,
+        livery.number
+      ),
+    [livery.stripeStyle, livery.bodyColor, livery.stripeColor, livery.number]
+  );
+
+  const wheelFinishPreview = useMemo(
+    () => getWheelFinishPreviewPng(livery.wheelFinish),
+    [livery.wheelFinish]
+  );
+
+  const dynoTelemetryPng = useMemo(
+    () => getDynoAndChassisTelemetryPng(effectiveStats, tuning),
+    [effectiveStats, tuning]
+  );
+
   const upgradeSystems: Array<{
     key: keyof CarUpgrades;
     title: string;
@@ -95,20 +129,28 @@ export const GarageModal: React.FC<GarageModalProps> = ({
       className="animate-modal-in fixed inset-y-0 left-0 z-30 w-full max-w-xl p-4 md:p-6 flex flex-col justify-between pointer-events-auto border-r border-[#f5f2eb]/15 overflow-y-auto"
       style={{ backgroundColor: 'rgba(13, 12, 11, 0.95)' }}
     >
-      <div className="space-y-5">
-        {/* Header */}
+      <div className="space-y-4">
+        {/* Header with Cloisonné Marque Crest */}
         <div className="flex items-center justify-between border-b border-[#f5f2eb]/15 pb-3.5">
-          <div>
-            <h2 className="font-display font-bold text-xl tracking-wide text-[#f5f2eb] uppercase">
-              Scuderia Paddock & Engineering
-            </h2>
-            <p className="text-xs text-[#a39c8e]">
-              {selectedCar.name} · Balance:{' '}
-              <span className="text-[#f59e0b] font-semibold">{effectiveStats.balanceLabel}</span> ·{' '}
-              <span className="font-mono-tabular text-[#f59e0b] font-semibold">
-                ∞ UNLIMITED CR
-              </span>
-            </p>
+          <div className="flex items-center gap-3">
+            <img
+              src={activeMarqueCrest}
+              alt={`${selectedCar.name} Marque Crest`}
+              referrerPolicy="no-referrer"
+              className="w-11 h-11 object-contain shrink-0"
+            />
+            <div>
+              <h2 className="font-display font-bold text-xl tracking-wide text-[#f5f2eb] uppercase">
+                Scuderia Paddock & Engineering
+              </h2>
+              <p className="text-xs text-[#a39c8e]">
+                {selectedCar.name} · Balance:{' '}
+                <span className="text-[#f59e0b] font-semibold">{effectiveStats.balanceLabel}</span> ·{' '}
+                <span className="font-mono-tabular text-[#f59e0b] font-semibold">
+                  ∞ UNLIMITED CR
+                </span>
+              </p>
+            </div>
           </div>
           <button
             type="button"
@@ -190,7 +232,7 @@ export const GarageModal: React.FC<GarageModalProps> = ({
           ))}
         </div>
 
-        {/* TAB 1: CLASSIC CARS */}
+        {/* TAB 1: CLASSIC CARS WITH ORTHOGRAPHIC BLUEPRINTS & MARQUE CRESTS */}
         {tab === 'cars' && (
           <div className="space-y-2.5">
             {CLASSIC_CARS.map((car) => {
@@ -202,6 +244,15 @@ export const GarageModal: React.FC<GarageModalProps> = ({
                 100,
                 Math.round(((7.0 - car.baseStats.accel0to100) / 3.2) * 100)
               );
+              const carBlueprint = getCarBlueprintPng(
+                car.id,
+                carLivery.bodyColor,
+                carLivery.stripeColor,
+                carLivery.stripeStyle,
+                carLivery.number,
+                carLivery.wheelFinish
+              );
+              const carCrest = getMarqueCrestPng(car.id);
 
               return (
                 <button
@@ -215,23 +266,20 @@ export const GarageModal: React.FC<GarageModalProps> = ({
                   }`}
                 >
                   <div className="flex items-start gap-3.5">
-                    {/* Livery & FIA Roundel Badge Swatch Tile */}
-                    <div
-                      className="w-12 h-14 rounded border border-white/20 shrink-0 relative overflow-hidden flex items-center justify-center shadow-inner"
-                      style={{ backgroundColor: carLivery.bodyColor }}
-                    >
-                      {carLivery.stripeStyle !== 'none' && (
-                        <div
-                          className="absolute inset-y-0 w-2.5 opacity-90"
-                          style={{
-                            backgroundColor: carLivery.stripeColor,
-                            left: carLivery.stripeStyle === 'offset_lemans' ? '22%' : '39%',
-                          }}
-                        />
-                      )}
-                      <div className="relative z-10 w-8 h-8 rounded-full bg-[#f8fafc] border border-black/80 flex items-center justify-center font-display font-bold text-xs text-[#09090b] font-mono-tabular shadow">
-                        {carLivery.number}
-                      </div>
+                    {/* Orthographic Carrozzeria Blueprint & Marque Crest Tile */}
+                    <div className="w-36 h-24 rounded border border-white/15 shrink-0 relative overflow-hidden bg-[#090d16]">
+                      <img
+                        src={carBlueprint}
+                        alt={`${car.name} Blueprint`}
+                        referrerPolicy="no-referrer"
+                        className="w-full h-full object-contain"
+                      />
+                      <img
+                        src={carCrest}
+                        alt={`${car.name} Crest`}
+                        referrerPolicy="no-referrer"
+                        className="absolute top-1 left-1 w-6 h-6 object-contain"
+                      />
                     </div>
 
                     <div className="flex-1 min-w-0">
@@ -246,12 +294,12 @@ export const GarageModal: React.FC<GarageModalProps> = ({
                       <div className="text-xs text-[#a39c8e] mt-0.5">
                         {car.origin} · {car.displacement} · {car.baseStats.topSpeedKmh} KM/H Factory Top
                       </div>
-                      <p className="text-xs text-[#cfc9bc] mt-1.5 leading-relaxed">
+                      <p className="text-xs text-[#cfc9bc] mt-1 leading-relaxed">
                         {car.description}
                       </p>
 
                       {/* 3-Metric Factory Spec Comparison Strip */}
-                      <div className="grid grid-cols-3 gap-2.5 mt-2.5 pt-2 border-t border-[#f5f2eb]/10">
+                      <div className="grid grid-cols-3 gap-2.5 mt-2 pt-2 border-t border-[#f5f2eb]/10">
                         <div>
                           <div className="flex justify-between text-[10px] text-[#a39c8e]">
                             <span>VELOCITY</span>
@@ -303,9 +351,45 @@ export const GarageModal: React.FC<GarageModalProps> = ({
           </div>
         )}
 
-        {/* TAB 2: LIVERY STUDIO */}
+        {/* TAB 2: LIVERY STUDIO WITH COACHWORK BONNET & WHEEL ASSEMBLY PREVIEWS */}
         {tab === 'livery' && (
           <div className="space-y-4">
+            {/* Live Livery Coachwork & Wheel Hardware Visual Inspection Row */}
+            <div className="grid grid-cols-2 gap-3 p-3 rounded bg-[#161412] border border-[#f5f2eb]/12">
+              <div className="flex items-center gap-3">
+                <img
+                  src={liveryPatternPreview}
+                  alt="Coachwork Bonnet Livery Preview"
+                  referrerPolicy="no-referrer"
+                  className="w-24 h-14 rounded object-cover border border-white/15 shrink-0"
+                />
+                <div className="min-w-0">
+                  <div className="text-[10px] uppercase tracking-wider text-[#a39c8e]">
+                    Coachwork Spec
+                  </div>
+                  <div className="text-xs font-bold text-[#f5f2eb] truncate">
+                    #{livery.number} · {livery.stripeStyle.replace('_', ' ').toUpperCase()}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <img
+                  src={wheelFinishPreview}
+                  alt="Wheel & Brake Assembly Preview"
+                  referrerPolicy="no-referrer"
+                  className="w-14 h-14 rounded object-contain border border-white/15 shrink-0"
+                />
+                <div className="min-w-0">
+                  <div className="text-[10px] uppercase tracking-wider text-[#a39c8e]">
+                    Wheel & Caliper
+                  </div>
+                  <div className="text-xs font-bold text-[#f59e0b] truncate">
+                    {livery.wheelFinish.replace('_', ' ').toUpperCase()}
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {/* Paint Swatches */}
             <div>
               <label className="block text-xs font-semibold text-[#cfc9bc] mb-2">
@@ -444,7 +528,7 @@ export const GarageModal: React.FC<GarageModalProps> = ({
           </div>
         )}
 
-        {/* TAB 3: PERFORMANCE UPGRADES */}
+        {/* TAB 3: PERFORMANCE UPGRADES WITH TECHNICAL CUTAWAY SCHEMATICS */}
         {tab === 'upgrades' && (
           <div className="space-y-3">
             {upgradeSystems.map((sys) => {
@@ -452,26 +536,34 @@ export const GarageModal: React.FC<GarageModalProps> = ({
               const cost = getUpgradeCost(currentLvl);
               const isMax = currentLvl >= 5;
               const canAfford = !isMax && credits >= 0;
+              const schematicPng = getUpgradePartSchematicPng(sys.key, currentLvl);
 
               return (
                 <div
                   key={sys.key}
-                  className="p-3.5 rounded bg-[#161412] border border-[#f5f2eb]/12 flex items-center justify-between gap-4"
+                  className="p-3 rounded bg-[#161412] border border-[#f5f2eb]/12 flex items-center justify-between gap-3.5"
                 >
-                  <div className="space-y-1">
-                    <div className="text-sm font-bold text-[#f5f2eb]">{sys.title}</div>
-                    <div className="text-xs text-[#a39c8e]">{sys.effect}</div>
+                  <img
+                    src={schematicPng}
+                    alt={sys.title}
+                    referrerPolicy="no-referrer"
+                    className="w-26 h-20 rounded border border-white/15 object-contain shrink-0 bg-[#0b0e14]"
+                  />
+
+                  <div className="space-y-1 flex-1 min-w-0">
+                    <div className="text-sm font-bold text-[#f5f2eb] truncate">{sys.title}</div>
+                    <div className="text-xs text-[#a39c8e] leading-snug">{sys.effect}</div>
                     {/* Discrete 5-stage graphical pips */}
                     <div className="flex items-center gap-1.5 pt-1">
                       {[1, 2, 3, 4, 5].map((pip) => (
                         <span
                           key={pip}
-                          className={`h-2 w-6 rounded-xs ${
+                          className={`h-2 w-5 rounded-xs ${
                             pip <= currentLvl ? 'bg-[#f59e0b]' : 'bg-[#2c2825]'
                           }`}
                         />
                       ))}
-                      <span className="text-[11px] font-mono-tabular text-[#cfc9bc] ml-2">
+                      <span className="text-[11px] font-mono-tabular text-[#cfc9bc] ml-1.5">
                         Stage {currentLvl}/5
                       </span>
                     </div>
@@ -481,7 +573,7 @@ export const GarageModal: React.FC<GarageModalProps> = ({
                     type="button"
                     disabled={!canAfford}
                     onClick={() => onBuyUpgrade(sys.key)}
-                    className={`px-3.5 py-2 rounded text-xs font-display font-bold tracking-wider uppercase transition-colors whitespace-nowrap shrink-0 ${
+                    className={`px-3 py-2 rounded text-xs font-display font-bold tracking-wider uppercase transition-colors whitespace-nowrap shrink-0 ${
                       isMax
                         ? 'bg-[#262320] text-[#a39c8e] cursor-default'
                         : canAfford
@@ -497,12 +589,22 @@ export const GarageModal: React.FC<GarageModalProps> = ({
           </div>
         )}
 
-        {/* TAB 4: PRO HANDLING TUNING */}
+        {/* TAB 4: PRO HANDLING TUNING WITH LIVE DYNAMOMETER & CHASSIS TELEMETRY GRAPH */}
         {tab === 'tuning' && (
-          <div className="space-y-4">
+          <div className="space-y-3.5">
+            {/* Live Magneti Marelli Dynamometer & 4-Corner Chassis Balance Blueprint */}
+            <div className="rounded overflow-hidden border border-[#f5f2eb]/15 bg-[#0c1017]">
+              <img
+                src={dynoTelemetryPng}
+                alt="Magneti Marelli Dynamometer & Suspension Blueprint"
+                referrerPolicy="no-referrer"
+                className="w-full h-36 object-contain"
+              />
+            </div>
+
             {/* Handling Assistance Mode Selector */}
             {onToggleHandlingMode && (
-              <div className="p-3 rounded bg-[#161412] border border-[#f5f2eb]/12 flex items-center justify-between gap-3">
+              <div className="p-2.5 rounded bg-[#161412] border border-[#f5f2eb]/12 flex items-center justify-between gap-3">
                 <div>
                   <div className="text-xs font-bold text-[#f5f2eb]">
                     Steering & Stability Feel:{' '}
@@ -556,7 +658,7 @@ export const GarageModal: React.FC<GarageModalProps> = ({
             </div>
 
             {/* 6 Mechanical Sliders */}
-            <div className="space-y-3">
+            <div className="space-y-2.5">
               {/* 1. Suspension Stiffness */}
               <div>
                 <div className="flex justify-between text-xs mb-1">

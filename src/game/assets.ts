@@ -1,4 +1,12 @@
-import { TrackId } from './types';
+import {
+  CarUpgrades,
+  EffectiveCarStats,
+  HandlingTuning,
+  StripeStyle,
+  TireCompound,
+  TrackId,
+  WheelFinish,
+} from './types';
 
 const assetCache: Record<string, string> = {};
 
@@ -50,10 +58,38 @@ export function getChampionshipCrestPng(): string {
   const drawShieldPath = (scale: number) => {
     ctx.beginPath();
     ctx.moveTo(cx, cy - 92 * scale);
-    ctx.bezierCurveTo(cx + 76 * scale, cy - 92 * scale, cx + 82 * scale, cy - 32 * scale, cx + 74 * scale, cy + 16 * scale);
-    ctx.bezierCurveTo(cx + 64 * scale, cy + 62 * scale, cx + 28 * scale, cy + 88 * scale, cx, cy + 102 * scale);
-    ctx.bezierCurveTo(cx - 28 * scale, cy + 88 * scale, cx - 64 * scale, cy + 62 * scale, cx - 74 * scale, cy + 16 * scale);
-    ctx.bezierCurveTo(cx - 82 * scale, cy - 32 * scale, cx - 76 * scale, cy - 92 * scale, cx, cy - 92 * scale);
+    ctx.bezierCurveTo(
+      cx + 76 * scale,
+      cy - 92 * scale,
+      cx + 82 * scale,
+      cy - 32 * scale,
+      cx + 74 * scale,
+      cy + 16 * scale
+    );
+    ctx.bezierCurveTo(
+      cx + 64 * scale,
+      cy + 62 * scale,
+      cx + 28 * scale,
+      cy + 88 * scale,
+      cx,
+      cy + 102 * scale
+    );
+    ctx.bezierCurveTo(
+      cx - 28 * scale,
+      cy + 88 * scale,
+      cx - 64 * scale,
+      cy + 62 * scale,
+      cx - 74 * scale,
+      cy + 16 * scale
+    );
+    ctx.bezierCurveTo(
+      cx - 82 * scale,
+      cy - 32 * scale,
+      cx - 76 * scale,
+      cy - 92 * scale,
+      cx,
+      cy - 92 * scale
+    );
     ctx.closePath();
   };
 
@@ -131,6 +167,1015 @@ export function getChampionshipCrestPng(): string {
 }
 
 /**
+ * Generates authentic 1967 Cloisonné Manufacturer Marque Crests for each of the 4 classic cars
+ */
+export function getMarqueCrestPng(carId: string): string {
+  const key = `marque_${carId}`;
+  if (assetCache[key]) return assetCache[key];
+  if (typeof document === 'undefined') return createFallbackSvgDataUrl(carId);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 160;
+  canvas.height = 160;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return createFallbackSvgDataUrl(carId);
+
+  const cx = 80;
+  const cy = 80;
+
+  // Metallic gold/chrome outer shield
+  const drawShield = (rScale: number) => {
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - 64 * rScale);
+    ctx.bezierCurveTo(
+      cx + 56 * rScale,
+      cy - 64 * rScale,
+      cx + 60 * rScale,
+      cy - 18 * rScale,
+      cx + 52 * rScale,
+      cy + 16 * rScale
+    );
+    ctx.bezierCurveTo(
+      cx + 42 * rScale,
+      cy + 48 * rScale,
+      cx + 18 * rScale,
+      cy + 64 * rScale,
+      cx,
+      cy + 72 * rScale
+    );
+    ctx.bezierCurveTo(
+      cx - 18 * rScale,
+      cy + 64 * rScale,
+      cx - 42 * rScale,
+      cy + 48 * rScale,
+      cx - 52 * rScale,
+      cy + 16 * rScale
+    );
+    ctx.bezierCurveTo(
+      cx - 60 * rScale,
+      cy - 18 * rScale,
+      cx - 56 * rScale,
+      cy - 64 * rScale,
+      cx,
+      cy - 64 * rScale
+    );
+    ctx.closePath();
+  };
+
+  const rimGrad = ctx.createLinearGradient(20, 10, 140, 150);
+  rimGrad.addColorStop(0, '#FEF3C7');
+  rimGrad.addColorStop(0.5, '#D97706');
+  rimGrad.addColorStop(1, '#78350F');
+  drawShield(1.0);
+  ctx.fillStyle = rimGrad;
+  ctx.fill();
+
+  drawShield(0.88);
+  ctx.save();
+  ctx.clip();
+
+  if (carId === 'aurelia_250_gto') {
+    // Modena Giallo field + Italian tricolore top + black stallion silhouette
+    ctx.fillStyle = '#FACC15';
+    ctx.fillRect(0, 0, 160, 160);
+    ctx.fillStyle = '#15803D';
+    ctx.fillRect(cx - 55, cy - 58, 36, 12);
+    ctx.fillStyle = '#F8FAFC';
+    ctx.fillRect(cx - 19, cy - 58, 38, 12);
+    ctx.fillStyle = '#DC2626';
+    ctx.fillRect(cx + 19, cy - 58, 36, 12);
+
+    // Stylized prancing crest motif
+    ctx.fillStyle = '#090D14';
+    ctx.beginPath();
+    ctx.arc(cx, cy - 6, 18, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#FACC15';
+    ctx.font = 'bold 16px Georgia, serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('V12', cx, cy - 1);
+
+    ctx.fillStyle = '#090D14';
+    ctx.font = 'bold 12px monospace';
+    ctx.fillText('MODENA', cx, cy + 36);
+  } else if (carId === 'coventry_etype_lw') {
+    // British Racing Green enamel + gold Coventry wings
+    ctx.fillStyle = '#064E3B';
+    ctx.fillRect(0, 0, 160, 160);
+    ctx.strokeStyle = '#FDE68A';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(cx - 44, cy - 8);
+    ctx.lineTo(cx + 44, cy - 8);
+    ctx.moveTo(cx - 34, cy + 2);
+    ctx.lineTo(cx + 34, cy + 2);
+    ctx.stroke();
+
+    ctx.fillStyle = '#D97706';
+    ctx.beginPath();
+    ctx.arc(cx, cy - 3, 18, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#FEF3C7';
+    ctx.font = 'bold 13px Georgia, serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('3.8', cx, cy + 2);
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText('COVENTRY', cx, cy + 36);
+  } else if (carId === 'stuttgart_911s_rs') {
+    // Stuttgart quartered gold, red, and black heraldic crest
+    ctx.fillStyle = '#F59E0B';
+    ctx.fillRect(0, 0, 160, 160);
+    ctx.fillStyle = '#991B1B';
+    ctx.fillRect(cx, cy - 60, 60, 56);
+    ctx.fillRect(cx - 60, cy - 4, 60, 68);
+    ctx.fillStyle = '#090D14';
+    for (let y = -42; y <= 38; y += 16) {
+      ctx.fillRect(cx - 44, cy + y, 88, 5);
+    }
+    ctx.fillStyle = '#FDE68A';
+    ctx.fillRect(cx - 28, cy - 16, 56, 26);
+    ctx.fillStyle = '#090D14';
+    ctx.font = 'bold 13px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('911 RS', cx, cy + 1);
+  } else {
+    // Dearborn Blue, White & Crimson Le Mans Prototype Crest
+    ctx.fillStyle = '#1E3A8A';
+    ctx.fillRect(0, 0, 160, 160);
+    ctx.fillStyle = '#F8FAFC';
+    ctx.fillRect(cx - 60, cy - 22, 120, 22);
+    ctx.fillStyle = '#DC2626';
+    ctx.fillRect(cx - 60, cy - 44, 120, 22);
+    ctx.fillStyle = '#090D14';
+    ctx.font = 'bold 13px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('GT40 MK.II', cx, cy - 7);
+    ctx.fillStyle = '#FDE68A';
+    ctx.font = 'bold 12px Georgia, serif';
+    ctx.fillText('7.0L V8', cx, cy + 28);
+  }
+
+  // Enamel dome highlight
+  const gloss = ctx.createLinearGradient(0, cy - 60, 0, cy + 10);
+  gloss.addColorStop(0, 'rgba(255,255,255,0.32)');
+  gloss.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = gloss;
+  ctx.fillRect(0, 0, 160, 90);
+  ctx.restore();
+
+  drawShield(0.88);
+  ctx.strokeStyle = '#FEF3C7';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  const url = canvas.toDataURL('image/png');
+  assetCache[key] = url;
+  return url;
+}
+
+/**
+ * Generates an authentic 1967 Carrozzeria Orthographic Side-Profile & Technical Blueprint Plate
+ * reflecting the car's live body paint, stripe color, racing number, and wheel finish.
+ */
+export function getCarBlueprintPng(
+  carId: string,
+  bodyColor: string,
+  stripeColor: string,
+  stripeStyle: StripeStyle,
+  number: number,
+  wheelFinish: WheelFinish
+): string {
+  const key = `bp_${carId}_${bodyColor}_${stripeColor}_${stripeStyle}_${number}_${wheelFinish}`;
+  if (assetCache[key]) return assetCache[key];
+  if (typeof document === 'undefined') return createFallbackSvgDataUrl(carId);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 560;
+  canvas.height = 210;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return createFallbackSvgDataUrl(carId);
+
+  const w = canvas.width;
+  const h = canvas.height;
+
+  // Deep blueprint vellum charcoal-indigo drafting background
+  const bg = ctx.createLinearGradient(0, 0, w, h);
+  bg.addColorStop(0, '#0D131F');
+  bg.addColorStop(0.6, '#111827');
+  bg.addColorStop(1, '#090D16');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, w, h);
+
+  // Fine engineering drafting grid
+  ctx.strokeStyle = 'rgba(148, 163, 184, 0.08)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x <= w; x += 20) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, h);
+    ctx.stroke();
+  }
+  for (let y = 0; y <= h; y += 20) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(w, y);
+    ctx.stroke();
+  }
+
+  // Technical border & corner ticks
+  ctx.strokeStyle = 'rgba(245, 158, 11, 0.35)';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(8, 8, w - 16, h - 16);
+
+  // Dimension datum line & wheelbase markers
+  const groundY = 164;
+  ctx.strokeStyle = 'rgba(245, 242, 235, 0.28)';
+  ctx.setLineDash([5, 4]);
+  ctx.beginPath();
+  ctx.moveTo(28, groundY);
+  ctx.lineTo(w - 28, groundY);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Contact shadow on datum plane
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+  ctx.beginPath();
+  ctx.ellipse(w * 0.5, groundY + 2, 188, 9, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  const is911 = carId === 'stuttgart_911s_rs';
+  const isProto = carId === 'dearborn_gt40_mk2';
+  const isBritish = carId === 'coventry_etype_lw';
+
+  // Draw sculpted side-elevation silhouette per classic chassis
+  ctx.save();
+  ctx.beginPath();
+  if (isProto) {
+    // Low-slung 40.5-inch Le Mans Prototype wedge & Kamm tail
+    ctx.moveTo(86, 146); // rear lower valence
+    ctx.lineTo(78, 114); // Kamm tail vertical transom
+    ctx.lineTo(92, 108); // Integrated ducktail lip
+    ctx.bezierCurveTo(145, 106, 195, 96, 235, 84); // Engine cover & rear haunch
+    ctx.bezierCurveTo(275, 74, 322, 74, 358, 98); // Low wraparound windshield
+    ctx.bezierCurveTo(398, 96, 448, 104, 474, 126); // Front pontoon fender
+    ctx.lineTo(482, 142); // Front chin spoiler
+    ctx.lineTo(462, 148);
+  } else if (is911) {
+    // Iconic Stuttgart sloped fastback + RS ducktail spoiler
+    ctx.moveTo(92, 146);
+    ctx.lineTo(84, 122);
+    ctx.lineTo(96, 102); // Ducktail kick
+    ctx.lineTo(118, 104);
+    ctx.bezierCurveTo(165, 78, 225, 66, 286, 68); // Sloped roof arch
+    ctx.bezierCurveTo(318, 70, 344, 86, 362, 104); // Steep windshield
+    ctx.bezierCurveTo(405, 104, 446, 112, 470, 134); // Sloped front trunk & high fenders
+    ctx.lineTo(476, 148);
+  } else if (isBritish) {
+    // Long-bonnet Coventry E-Type Lightweight teardrop fastback
+    ctx.moveTo(84, 144);
+    ctx.bezierCurveTo(78, 124, 96, 108, 142, 92); // Tapered fastback tail
+    ctx.bezierCurveTo(190, 72, 245, 68, 288, 74); // Compact GT greenhouse
+    ctx.lineTo(324, 100); // Raked windscreen
+    ctx.bezierCurveTo(378, 96, 444, 102, 476, 124); // Endless sculpted bonnet
+    ctx.lineTo(478, 146);
+  } else {
+    // 1964 Aurelia 250 GTO: Scaglietti long nose, pontoon fenders & Kammback ducktail
+    ctx.moveTo(84, 146);
+    ctx.lineTo(78, 106); // Kammback vertical cut
+    ctx.lineTo(92, 96); // Integrated spoiler lip
+    ctx.bezierCurveTo(140, 98, 185, 74, 245, 72); // Fastback roofline
+    ctx.lineTo(312, 74);
+    ctx.lineTo(348, 102); // Windshield base
+    ctx.bezierCurveTo(395, 96, 448, 102, 478, 126); // Low Scaglietti nose
+    ctx.lineTo(482, 146);
+  }
+  ctx.closePath();
+
+  // Fill with live coachwork body color + metallic highlight gradient
+  ctx.fillStyle = bodyColor;
+  ctx.fill();
+
+  const bodySheen = ctx.createLinearGradient(0, 68, 0, 152);
+  bodySheen.addColorStop(0, 'rgba(255,255,255,0.28)');
+  bodySheen.addColorStop(0.45, 'rgba(255,255,255,0.03)');
+  bodySheen.addColorStop(1, 'rgba(0,0,0,0.48)');
+  ctx.fillStyle = bodySheen;
+  ctx.fill();
+
+  // Optional side sill / Le Mans stripe band
+  if (stripeStyle !== 'none') {
+    ctx.save();
+    ctx.clip();
+    ctx.fillStyle = stripeColor;
+    ctx.fillRect(70, 132, 420, 7);
+    if (stripeStyle === 'hood_sill') {
+      ctx.fillRect(345, 96, 130, 12);
+    }
+    ctx.restore();
+  }
+
+  ctx.strokeStyle = 'rgba(248, 250, 252, 0.55)';
+  ctx.lineWidth = 1.6;
+  ctx.stroke();
+  ctx.restore();
+
+  // Greenhouse side windows with chrome framing
+  ctx.save();
+  ctx.fillStyle = '#0F172A';
+  ctx.strokeStyle = '#E2E8F0';
+  ctx.lineWidth = 1.8;
+  ctx.beginPath();
+  if (isProto) {
+    ctx.moveTo(232, 88);
+    ctx.quadraticCurveTo(285, 76, 346, 98);
+    ctx.lineTo(240, 100);
+  } else if (is911) {
+    ctx.moveTo(186, 98);
+    ctx.quadraticCurveTo(245, 72, 336, 98);
+    ctx.lineTo(350, 104);
+    ctx.lineTo(186, 104);
+  } else {
+    ctx.moveTo(196, 96);
+    ctx.quadraticCurveTo(255, 74, 310, 78);
+    ctx.lineTo(340, 102);
+    ctx.lineTo(196, 102);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+
+  // Triple shark-gill fender louvers on front flank
+  ctx.fillStyle = '#090D14';
+  for (let g = 0; g < 3; g++) {
+    ctx.save();
+    ctx.translate(342 + g * 9, 118);
+    ctx.rotate(0.28);
+    ctx.fillRect(-2, -10, 3.5, 20);
+    ctx.restore();
+  }
+
+  // White FIA door roundel & racing number
+  const roundelX = 278;
+  const roundelY = 124;
+  ctx.fillStyle = '#F8FAFC';
+  ctx.beginPath();
+  ctx.arc(roundelX, roundelY, 17, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#090D14';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.fillStyle = '#090D14';
+  ctx.font = 'bold 15px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(String(number), roundelX, roundelY + 1);
+
+  // Front and rear chrome bumper blades + quad exhaust pipes
+  ctx.fillStyle = '#E2E8F0';
+  ctx.fillRect(468, 134, 18, 5);
+  ctx.fillRect(72, 132, 18, 5);
+  ctx.fillStyle = '#94A3B8';
+  ctx.fillRect(68, 141, 14, 3.5);
+  ctx.fillRect(68, 146, 14, 3.5);
+
+  // Front & Rear Wheels with Borrani wire / Gold Magnesium / Gunmetal Alloy detail
+  const wheelPositions = [152, 404];
+  const rimColor =
+    wheelFinish === 'gold_magnesium'
+      ? '#F59E0B'
+      : wheelFinish === 'gunmetal_alloy'
+      ? '#94A3B8'
+      : '#E2E8F0';
+
+  for (const wx of wheelPositions) {
+    const wy = 142;
+    // Wheel well arch cutout
+    ctx.fillStyle = '#05070B';
+    ctx.beginPath();
+    ctx.arc(wx, wy, 27, Math.PI, 0);
+    ctx.lineTo(wx + 27, wy + 8);
+    ctx.lineTo(wx - 27, wy + 8);
+    ctx.closePath();
+    ctx.fill();
+
+    // Dunlop Bias-Ply Tire
+    ctx.fillStyle = '#111827';
+    ctx.beginPath();
+    ctx.arc(wx, wy, 23, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Amber sidewall stripe
+    ctx.strokeStyle = '#F59E0B';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(wx, wy, 18.5, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Rim barrel
+    ctx.fillStyle = rimColor;
+    ctx.beginPath();
+    ctx.arc(wx, wy, 14, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Inner brake disc & spokes
+    ctx.fillStyle = '#1E293B';
+    ctx.beginPath();
+    ctx.arc(wx, wy, 11, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Bronze caliper
+    ctx.fillStyle = '#D97706';
+    ctx.fillRect(wx - 9, wy - 5, 5, 10);
+
+    // Spokes
+    ctx.strokeStyle = rimColor;
+    ctx.lineWidth = wheelFinish === 'chrome_wire' ? 1.1 : 2.4;
+    const spokeCount = wheelFinish === 'chrome_wire' ? 12 : 5;
+    for (let s = 0; s < spokeCount; s++) {
+      const ang = (s * Math.PI * 2) / spokeCount;
+      ctx.beginPath();
+      ctx.moveTo(wx, wy);
+      ctx.lineTo(wx + Math.cos(ang) * 13, wy + Math.sin(ang) * 13);
+      ctx.stroke();
+    }
+
+    // Knock-off center spinner
+    ctx.fillStyle = '#F8FAFC';
+    ctx.beginPath();
+    ctx.arc(wx, wy, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Technical Blueprint Callout Typography
+  ctx.fillStyle = 'rgba(245, 158, 11, 0.9)';
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('FIA GROUP 4 HOMOLOGATION · ORTHOGRAPHIC ELEVATION 1:18', 20, 24);
+  ctx.fillStyle = 'rgba(203, 213, 225, 0.75)';
+  ctx.fillText('WHEELBASE: 2,400 MM', 152, 188);
+  ctx.textAlign = 'right';
+  ctx.fillText(`CHASSIS NO. #${number} · ${wheelFinish.replace('_', ' ').toUpperCase()}`, w - 20, 24);
+
+  const url = canvas.toDataURL('image/png');
+  assetCache[key] = url;
+  return url;
+}
+
+/**
+ * Generates high-DPI 1967 Officina Meccanica Technical Cutaway & Hardware Schematics
+ * for each of the 4 mechanical upgrade systems in the Garage.
+ */
+export function getUpgradePartSchematicPng(
+  partKey: keyof CarUpgrades,
+  stageLevel: number
+): string {
+  const key = `part_${partKey}_${stageLevel}`;
+  if (assetCache[key]) return assetCache[key];
+  if (typeof document === 'undefined') return createFallbackSvgDataUrl(partKey);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 240;
+  canvas.height = 180;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return createFallbackSvgDataUrl(partKey);
+
+  const w = canvas.width;
+  const h = canvas.height;
+
+  // Dark slate workshop background with subtle blueprint grid
+  const bg = ctx.createRadialGradient(w * 0.5, h * 0.5, 10, w * 0.5, h * 0.5, 140);
+  bg.addColorStop(0, '#1E2430');
+  bg.addColorStop(1, '#0B0E14');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, w, h);
+
+  ctx.strokeStyle = 'rgba(245, 242, 235, 0.06)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x <= w; x += 16) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, h);
+    ctx.stroke();
+  }
+  for (let y = 0; y <= h; y += 16) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(w, y);
+    ctx.stroke();
+  }
+
+  if (partKey === 'engineLevel') {
+    // Six Weber 40 DCN Downdraft Carburetors & Spun-Aluminum Velocity Trumpets
+    // Crinkle-black V12 intake manifold bridge
+    ctx.fillStyle = '#1E293B';
+    ctx.strokeStyle = '#94A3B8';
+    ctx.lineWidth = 1.5;
+    ctx.fillRect(28, 96, 184, 48);
+    ctx.strokeRect(28, 96, 184, 48);
+
+    // Brass fuel rail & braided lines
+    ctx.strokeStyle = '#F59E0B';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(20, 114);
+    ctx.lineTo(220, 114);
+    ctx.stroke();
+
+    // 6 Velocity Stack Trumpets
+    const xs = [44, 74, 104, 136, 166, 196];
+    for (const tx of xs) {
+      // Carburetor float bowl
+      ctx.fillStyle = '#64748B';
+      ctx.fillRect(tx - 10, 74, 20, 26);
+
+      // Brass throttle linkage jet
+      ctx.fillStyle = '#FBBF24';
+      ctx.beginPath();
+      ctx.arc(tx, 87, 4, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Flared spun-aluminum velocity trumpet
+      const trumpGrad = ctx.createLinearGradient(tx - 12, 34, tx + 12, 74);
+      trumpGrad.addColorStop(0, '#F8FAFC');
+      trumpGrad.addColorStop(0.5, '#94A3B8');
+      trumpGrad.addColorStop(1, '#CBD5E1');
+      ctx.fillStyle = trumpGrad;
+      ctx.beginPath();
+      ctx.moveTo(tx - 13, 38);
+      ctx.lineTo(tx + 13, 38);
+      ctx.lineTo(tx + 8, 74);
+      ctx.lineTo(tx - 8, 74);
+      ctx.closePath();
+      ctx.fill();
+
+      // Trumpet mouth rim
+      ctx.fillStyle = stageLevel >= 3 ? '#F59E0B' : '#090D14';
+      ctx.beginPath();
+      ctx.ellipse(tx, 38, 13, 4.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#F8FAFC';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+  } else if (partKey === 'transmissionLevel') {
+    // Close-Ratio 5-Speed Dog-Leg Gearbox Helical Gears & Open-Gate Shifter
+    const gears = [
+      { x: 68, y: 92, r: 34, teeth: 14, color: '#94A3B8' },
+      { x: 122, y: 78, r: 26, teeth: 11, color: '#CBD5E1' },
+      { x: 168, y: 102, r: 30, teeth: 12, color: '#F59E0B' },
+    ];
+    for (const g of gears) {
+      ctx.save();
+      ctx.translate(g.x, g.y);
+      ctx.fillStyle = g.color;
+      for (let t = 0; t < g.teeth; t++) {
+        const a = (t * Math.PI * 2) / g.teeth;
+        ctx.save();
+        ctx.rotate(a);
+        ctx.fillRect(-4, -g.r - 5, 8, 8);
+        ctx.restore();
+      }
+      ctx.beginPath();
+      ctx.arc(0, 0, g.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#0F172A';
+      ctx.beginPath();
+      ctx.arc(0, 0, g.r * 0.42, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // Chrome Open-Gate 5-Speed Shift Plate inset
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+    ctx.strokeStyle = '#E2E8F0';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(142, 22, 76, 48, 6);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.strokeStyle = '#F59E0B';
+    ctx.lineWidth = 2.2;
+    for (const gx of [158, 180, 202]) {
+      ctx.beginPath();
+      ctx.moveTo(gx, 30);
+      ctx.lineTo(gx, 62);
+      ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.moveTo(158, 46);
+    ctx.lineTo(202, 46);
+    ctx.stroke();
+  } else if (partKey === 'tiresLevel') {
+    // Borrani 72-Spoke Wire Wheel + Dunlop Racing Tread + Girling Caliper
+    const cx = 120;
+    const cy = 90;
+    // Outer tire with tread blocks
+    ctx.fillStyle = '#0F172A';
+    ctx.beginPath();
+    ctx.arc(cx, cy, 64, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#334155';
+    ctx.lineWidth = 4;
+    ctx.setLineDash([7, 4]);
+    ctx.beginPath();
+    ctx.arc(cx, cy, 63, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Yellow Dunlop sidewall ring
+    ctx.strokeStyle = '#F59E0B';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 50, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Ventilated cast-iron brake rotor
+    ctx.fillStyle = '#475569';
+    ctx.beginPath();
+    ctx.arc(cx, cy, 38, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Bronze Girling Brake Caliper
+    ctx.fillStyle = '#D97706';
+    ctx.beginPath();
+    ctx.roundRect(cx - 38, cy - 16, 16, 32, 3);
+    ctx.fill();
+
+    // Cross-laced chrome wire spokes
+    ctx.strokeStyle = '#E2E8F0';
+    ctx.lineWidth = 1.2;
+    for (let i = 0; i < 24; i++) {
+      const a = (i * Math.PI * 2) / 24;
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(a) * 10, cy + Math.sin(a) * 10);
+      ctx.lineTo(cx + Math.cos(a + 0.35) * 41, cy + Math.sin(a + 0.35) * 41);
+      ctx.stroke();
+    }
+
+    // 3-eared knock-off spinner
+    ctx.fillStyle = '#F8FAFC';
+    for (let e = 0; e < 3; e++) {
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate((e * Math.PI * 2) / 3);
+      ctx.fillRect(-3.5, -18, 7, 18);
+      ctx.restore();
+    }
+    ctx.beginPath();
+    ctx.arc(cx, cy, 9, 0, Math.PI * 2);
+    ctx.fillStyle = '#D97706';
+    ctx.fill();
+  } else {
+    // Superleggera Tubular Spaceframe & Drilled Aluminum Coachwork Panel
+    ctx.strokeStyle = '#94A3B8';
+    ctx.lineWidth = 4;
+    ctx.lineCap = 'round';
+    const tubes = [
+      [28, 134, 92, 46],
+      [92, 46, 174, 46],
+      [174, 46, 214, 134],
+      [28, 134, 214, 134],
+      [92, 46, 136, 134],
+      [174, 46, 136, 134],
+      [60, 90, 194, 90],
+    ];
+    for (const [x1, y1, x2, y2] of tubes) {
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    }
+
+    // Brushed aluminum gusset plate with weight-saving flanged holes
+    ctx.fillStyle = '#CBD5E1';
+    ctx.fillRect(46, 108, 148, 34);
+    for (const hx of [68, 98, 128, 158]) {
+      ctx.fillStyle = '#0F172A';
+      ctx.beginPath();
+      ctx.arc(hx, 125, 9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#F59E0B';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+
+    // Leather bonnet buckle strap
+    ctx.fillStyle = '#7C2D12';
+    ctx.fillRect(172, 26, 18, 66);
+    ctx.strokeStyle = '#F8FAFC';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(169, 48, 24, 16);
+  }
+
+  // Stage stamp badge in top-left corner
+  ctx.fillStyle = 'rgba(9, 13, 20, 0.85)';
+  ctx.fillRect(8, 8, 84, 20);
+  ctx.strokeStyle = 'rgba(245, 158, 11, 0.5)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(8, 8, 84, 20);
+  ctx.fillStyle = '#F59E0B';
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(`STAGE ${stageLevel}/5 SPEC`, 14, 18);
+
+  const url = canvas.toDataURL('image/png');
+  assetCache[key] = url;
+  return url;
+}
+
+/**
+ * Generates a top-down 1967 Coachwork Bonnet & Roof Livery Preview Plate
+ */
+export function getLiveryPatternPreviewPng(
+  stripeStyle: StripeStyle,
+  bodyColor: string,
+  stripeColor: string,
+  number: number
+): string {
+  const key = `liv_prev_${stripeStyle}_${bodyColor}_${stripeColor}_${number}`;
+  if (assetCache[key]) return assetCache[key];
+  if (typeof document === 'undefined') return createFallbackSvgDataUrl(stripeStyle);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 220;
+  canvas.height = 120;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return createFallbackSvgDataUrl(stripeStyle);
+
+  ctx.fillStyle = '#0D1119';
+  ctx.fillRect(0, 0, 220, 120);
+
+  // Sculpted top-down GT hood silhouette
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(24, 22);
+  ctx.quadraticCurveTo(110, 12, 196, 28);
+  ctx.quadraticCurveTo(206, 60, 196, 92);
+  ctx.quadraticCurveTo(110, 108, 24, 98);
+  ctx.quadraticCurveTo(16, 60, 24, 22);
+  ctx.closePath();
+  ctx.fillStyle = bodyColor;
+  ctx.fill();
+  ctx.clip();
+
+  // Stripe geometry
+  ctx.fillStyle = stripeColor;
+  if (stripeStyle === 'twin_center') {
+    ctx.fillRect(10, 46, 200, 10);
+    ctx.fillRect(10, 64, 200, 10);
+  } else if (stripeStyle === 'offset_lemans') {
+    ctx.fillRect(10, 32, 200, 14);
+    ctx.fillRect(10, 50, 200, 5);
+  } else if (stripeStyle === 'hood_sill') {
+    ctx.fillRect(10, 38, 200, 44);
+  }
+
+  // Hood roundel
+  ctx.fillStyle = '#F8FAFC';
+  ctx.beginPath();
+  ctx.arc(146, 60, 18, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#090D14';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  ctx.fillStyle = '#090D14';
+  ctx.font = 'bold 14px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(String(number), 146, 61);
+
+  // Twin leather bonnet straps
+  ctx.fillStyle = '#78350F';
+  ctx.fillRect(82, 16, 8, 22);
+  ctx.fillRect(82, 82, 8, 22);
+  ctx.restore();
+
+  ctx.strokeStyle = 'rgba(248, 250, 252, 0.35)';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(4, 4, 212, 112);
+
+  const url = canvas.toDataURL('image/png');
+  assetCache[key] = url;
+  return url;
+}
+
+/**
+ * Generates a high-DPI 1967 Racing Wheel & Brake Assembly Preview for the Livery Studio
+ */
+export function getWheelFinishPreviewPng(wheelFinish: WheelFinish): string {
+  const key = `wheel_prev_${wheelFinish}`;
+  if (assetCache[key]) return assetCache[key];
+  if (typeof document === 'undefined') return createFallbackSvgDataUrl(wheelFinish);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 140;
+  canvas.height = 140;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return createFallbackSvgDataUrl(wheelFinish);
+
+  const cx = 70;
+  const cy = 70;
+  ctx.fillStyle = '#0D1119';
+  ctx.fillRect(0, 0, 140, 140);
+
+  // Dunlop tire outer ring
+  ctx.fillStyle = '#111827';
+  ctx.beginPath();
+  ctx.arc(cx, cy, 58, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = '#F59E0B';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 46, 0, Math.PI * 2);
+  ctx.stroke();
+
+  const rimColor =
+    wheelFinish === 'gold_magnesium'
+      ? '#F59E0B'
+      : wheelFinish === 'gunmetal_alloy'
+      ? '#94A3B8'
+      : '#E2E8F0';
+
+  // Rim lip
+  ctx.fillStyle = rimColor;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 39, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Inner brake drum/disc
+  ctx.fillStyle = '#1E293B';
+  ctx.beginPath();
+  ctx.arc(cx, cy, 31, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Caliper
+  ctx.fillStyle = '#D97706';
+  ctx.fillRect(cx - 28, cy - 12, 10, 24);
+
+  // Spokes
+  ctx.strokeStyle = rimColor;
+  const spokes = wheelFinish === 'chrome_wire' ? 20 : 5;
+  ctx.lineWidth = wheelFinish === 'chrome_wire' ? 1.2 : 5.5;
+  for (let i = 0; i < spokes; i++) {
+    const a = (i * Math.PI * 2) / spokes;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.cos(a) * 35, cy + Math.sin(a) * 35);
+    ctx.stroke();
+  }
+
+  // Spinner
+  ctx.fillStyle = '#F8FAFC';
+  ctx.beginPath();
+  ctx.arc(cx, cy, 8, 0, Math.PI * 2);
+  ctx.fill();
+
+  const url = canvas.toDataURL('image/png');
+  assetCache[key] = url;
+  return url;
+}
+
+/**
+ * Generates a high-DPI 1967 Magneti Marelli Engine Dynamometer & Suspension Geometry Chart
+ * that updates dynamically with the player's effective stats and 6 mechanical tuning sliders.
+ */
+export function getDynoAndChassisTelemetryPng(
+  effectiveStats: EffectiveCarStats,
+  tuning: HandlingTuning
+): string {
+  const key = `dyno_${effectiveStats.powerHp}_${effectiveStats.topSpeedKmh}_${tuning.suspensionStiffness}_${tuning.tirePressurePsi}_${tuning.aeroDownforce}_${tuning.finalDriveRatio}_${tuning.brakeBiasFront}_${tuning.diffLockAccel}`;
+  if (assetCache[key]) return assetCache[key];
+  if (typeof document === 'undefined') return createFallbackSvgDataUrl('DYNO');
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 560;
+  canvas.height = 175;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return createFallbackSvgDataUrl('DYNO');
+
+  const w = canvas.width;
+  const h = canvas.height;
+
+  ctx.fillStyle = '#0C1017';
+  ctx.fillRect(0, 0, w, h);
+
+  // Oscilloscope / Dyno graph grid
+  ctx.strokeStyle = 'rgba(148, 163, 184, 0.1)';
+  ctx.lineWidth = 1;
+  for (let x = 16; x <= w - 16; x += 24) {
+    ctx.beginPath();
+    ctx.moveTo(x, 16);
+    ctx.lineTo(x, h - 22);
+    ctx.stroke();
+  }
+  for (let y = 16; y <= h - 22; y += 22) {
+    ctx.beginPath();
+    ctx.moveTo(16, y);
+    ctx.lineTo(w - 16, y);
+    ctx.stroke();
+  }
+
+  // Left half: Weber / Magneti Marelli Power & Torque Dyno Curve (1,000 – 8,500 RPM)
+  const gx0 = 24;
+  const gx1 = 290;
+  const gy0 = 28;
+  const gy1 = h - 28;
+
+  // Torque curve (emerald)
+  ctx.strokeStyle = '#10B981';
+  ctx.lineWidth = 2.2;
+  ctx.beginPath();
+  for (let i = 0; i <= 40; i++) {
+    const t = i / 40;
+    const x = gx0 + t * (gx1 - gx0);
+    const torqueShape =
+      Math.sin(t * Math.PI * 0.88) * 0.78 +
+      0.22 -
+      (tuning.finalDriveRatio - 3.5) * 0.04 * (1 - t);
+    const y = gy1 - Math.max(0.1, Math.min(0.95, torqueShape)) * (gy1 - gy0);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // Horsepower curve (amber gold)
+  ctx.strokeStyle = '#F59E0B';
+  ctx.lineWidth = 2.6;
+  ctx.beginPath();
+  for (let i = 0; i <= 40; i++) {
+    const t = i / 40;
+    const x = gx0 + t * (gx1 - gx0);
+    const hpFactor = Math.pow(t, 1.18) * Math.sin(t * Math.PI * 0.62) * 1.12;
+    const y = gy1 - Math.max(0.06, Math.min(0.96, hpFactor)) * (gy1 - gy0);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  ctx.fillStyle = '#F59E0B';
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText(`BANCO PROVA WEBER · ${effectiveStats.powerHp} CV @ 7,800 RPM`, gx0, 20);
+  ctx.fillStyle = '#94A3B8';
+  ctx.fillText('2,000 RPM', gx0, h - 8);
+  ctx.textAlign = 'right';
+  ctx.fillText('8,500 RPM', gx1, h - 8);
+
+  // Right half: 4-Corner Chassis Balance, Downforce Vector & Brake Bias Schematic
+  const cx = 428;
+  const cy = 90;
+
+  // Chassis plan-view frame
+  ctx.strokeStyle = '#64748B';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(cx - 58, cy - 28, 116, 56);
+
+  // Brake bias distribution bar between front and rear axles
+  const frontBiasFrac = tuning.brakeBiasFront / 100;
+  const biasX = cx - 50 + (1 - frontBiasFrac) * 100;
+  ctx.fillStyle = '#EF4444';
+  ctx.beginPath();
+  ctx.arc(biasX, cy, 5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Four wheels at corners
+  const corners = [
+    [-58, -34],
+    [-58, 22],
+    [42, -34],
+    [42, 22],
+  ];
+  for (const [ox, oy] of corners) {
+    ctx.fillStyle = '#E2E8F0';
+    ctx.fillRect(cx + ox, cy + oy, 18, 12);
+  }
+
+  ctx.fillStyle = '#38BDF8';
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText(
+    `AERO: ${tuning.aeroDownforce}% · LSD: ${tuning.diffLockAccel}%`,
+    320,
+    20
+  );
+  ctx.fillStyle = '#CBD5E1';
+  ctx.fillText(
+    `SPRING: ${tuning.suspensionStiffness.toFixed(1)} kN/m · BIAS: ${tuning.brakeBiasFront}%F`,
+    320,
+    h - 8
+  );
+
+  const url = canvas.toDataURL('image/png');
+  assetCache[key] = url;
+  return url;
+}
+
+/**
  * Generates high-DPI illustrated 16:9 PNG circuit preview cards for each track
  */
 export function getTrackPreviewPng(trackId: TrackId): string {
@@ -197,7 +1242,10 @@ export function getTrackPreviewPng(trackId: TrackId): string {
   const peakAmp = trackId === 'stelvio_pass' || trackId === 'targa_madonie' ? 48 : 26;
   for (let x = 0; x <= w; x += 32) {
     const peak =
-      Math.sin(x * 0.012 + (trackId === 'eifel_sprint' ? 1.4 : trackId === 'stelvio_pass' ? 2.2 : 0.3)) * peakAmp +
+      Math.sin(
+        x * 0.012 + (trackId === 'eifel_sprint' ? 1.4 : trackId === 'stelvio_pass' ? 2.2 : 0.3)
+      ) *
+        peakAmp +
       Math.cos(x * 0.027) * (peakAmp * 0.55);
     ctx.lineTo(x, h * 0.48 - peak);
   }
@@ -311,6 +1359,70 @@ export function getTrackPreviewPng(trackId: TrackId): string {
   vig.addColorStop(1, 'rgba(11, 15, 23, 0.84)');
   ctx.fillStyle = vig;
   ctx.fillRect(0, 0, w, h);
+
+  const url = canvas.toDataURL('image/png');
+  assetCache[key] = url;
+  return url;
+}
+
+/**
+ * Generates a high-DPI Dunlop Vintage Racing Tire Compound Emblem (Soft, Medium, Hard, Wet)
+ */
+export function getTireCompoundBadgePng(compound: TireCompound): string {
+  const key = `tire_badge_${compound}`;
+  if (assetCache[key]) return assetCache[key];
+  if (typeof document === 'undefined') return createFallbackSvgDataUrl(compound);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 120;
+  canvas.height = 120;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return createFallbackSvgDataUrl(compound);
+
+  const cx = 60;
+  const cy = 60;
+  const ringColor =
+    compound === 'soft'
+      ? '#EF4444'
+      : compound === 'medium'
+      ? '#F59E0B'
+      : compound === 'hard'
+      ? '#F8FAFC'
+      : '#38BDF8';
+
+  // Vulcanized rubber tire casing
+  ctx.fillStyle = '#0F172A';
+  ctx.beginPath();
+  ctx.arc(cx, cy, 52, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Tread blocks around circumference
+  ctx.strokeStyle = '#334155';
+  ctx.lineWidth = 4;
+  ctx.setLineDash(compound === 'wet' ? [4, 3] : [9, 3]);
+  ctx.beginPath();
+  ctx.arc(cx, cy, 51, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Compound sidewall band
+  ctx.strokeStyle = ringColor;
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 38, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Wire wheel center
+  ctx.fillStyle = '#1E293B';
+  ctx.beginPath();
+  ctx.arc(cx, cy, 26, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = ringColor;
+  ctx.font = 'bold 13px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(compound.toUpperCase(), cx, cy + 1);
 
   const url = canvas.toDataURL('image/png');
   assetCache[key] = url;

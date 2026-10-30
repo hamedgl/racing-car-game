@@ -1226,8 +1226,8 @@ export function stepVehiclePhysics(
   // Smooth throttle & brake inputs
   const targetThrottle = vehicle.finished ? 0.15 : input.forward || vehicle.isBoosting ? 1 : 0;
   const targetBrake = vehicle.finished ? 0.5 : input.backward ? 1 : 0;
-  vehicle.throttle += (targetThrottle - vehicle.throttle) * Math.min(1, dt * 16);
-  vehicle.brake += (targetBrake - vehicle.brake) * Math.min(1, dt * 18);
+  vehicle.throttle += (targetThrottle - vehicle.throttle) * Math.min(1, dt * 18);
+  vehicle.brake += (targetBrake - vehicle.brake) * Math.min(1, dt * 20);
   vehicle.handbrake = vehicle.finished ? false : input.handbrake;
 
   // Thermal Brake Disc Glow
@@ -1279,34 +1279,34 @@ export function stepVehiclePhysics(
   const frontTireHealth =
     (vehicle.tires.fl.treadLife + vehicle.tires.fr.treadLife) * 0.25 +
     (vehicle.tires.fl.structuralIntegrity + vehicle.tires.fr.structuralIntegrity) * 0.25;
-  const frontTurnInFactor = 0.85 + 0.15 * frontTireHealth;
+  const frontTurnInFactor = 0.86 + 0.14 * frontTireHealth;
 
   const maxSteerRad =
-    0.46 *
-    (1 - speedRatio * (isAssisted ? 0.38 : 0.35)) *
+    0.47 *
+    (1 - speedRatio * (isAssisted ? 0.40 : 0.36)) *
     (stats.turnInRate / 1.08) *
     aquaSteerPenalty *
     frontTurnInFactor;
 
   // Intuitive Caster Counter-Steer & Slip-Angle Catch Assist (opposes excessive slip angle to prevent spinouts)
-  const assistGain = isAssisted ? 0.48 : 0.28;
-  const maxAssistRad = isAssisted ? 0.24 : 0.15;
+  const assistGain = isAssisted ? 0.52 : 0.30;
+  const maxAssistRad = isAssisted ? 0.26 : 0.16;
   const driftAssistSteer =
-    vehicle.isPlayer && Math.abs(vehicle.slipAngleRad) > 0.05 && !vehicle.handbrake
+    vehicle.isPlayer && Math.abs(vehicle.slipAngleRad) > 0.045 && !vehicle.handbrake
       ? clamp(vehicle.slipAngleRad * assistGain, -maxAssistRad, maxAssistRad)
       : 0;
 
   // Subtle Track-Tangent Alignment & Apex Guidance when cruising on-track in Assisted mode
   let tangentGuideSteer = 0;
-  if (isAssisted && !vehicle.isOffTrack && vehicle.speedMs > 8) {
+  if (isAssisted && !vehicle.isOffTrack && vehicle.speedMs > 7) {
     const trackYaw = Math.atan2(prevLookup.tx, prevLookup.tz);
     const headingErr = normalizeAngle(trackYaw - vehicle.yaw);
-    if (Math.abs(rawSteer) < 0.05 && Math.abs(headingErr) < 0.38) {
+    if (Math.abs(rawSteer) < 0.05 && Math.abs(headingErr) < 0.40) {
       // Gently self-align down straights and gentle sweepers when no steering key is pressed
-      tangentGuideSteer = clamp(headingErr * 0.34, -0.09, 0.09);
+      tangentGuideSteer = clamp(headingErr * 0.38, -0.095, 0.095);
     } else if (Math.abs(rawSteer) > 0.1 && Math.sign(rawSteer) === Math.sign(prevLookup.sample.curvature)) {
       // Smooth apex turn-in help when steering into a corner
-      tangentGuideSteer = clamp(prevLookup.sample.curvature * 2.8, -0.06, 0.06);
+      tangentGuideSteer = clamp(prevLookup.sample.curvature * 3.1, -0.068, 0.068);
     }
     tangentGuideSteer *= 1 - collisionShockRatio;
   }
@@ -1317,7 +1317,7 @@ export function stepVehiclePhysics(
     0.54
   );
   // Progressive steering filter: crisp, non-twitchy initial turn-in and rapid self-centering release
-  const steerLerpRate = Math.abs(rawSteer) < 0.05 ? 26 : isAssisted ? 16.5 : 15;
+  const steerLerpRate = Math.abs(rawSteer) < 0.05 ? 28 : isAssisted ? 18.0 : 16.0;
   vehicle.steerAngle += (targetSteer - vehicle.steerAngle) * Math.min(1, dt * steerLerpRate);
 
   const fx = Math.sin(vehicle.yaw);
@@ -1385,7 +1385,7 @@ export function stepVehiclePhysics(
     : weatherGripMult;
 
   // Combined Asphalt Mechanics + Gravity Normal Load + Tire Compound/Wear/Temp + Track Rubbering + Handling Assist Bonus
-  const assistGripBonus = isAssisted ? 1.12 : 1.0;
+  const assistGripBonus = isAssisted ? 1.15 : 1.0;
   const surfaceGrip =
     track.surfaceGrip *
     effectiveWeatherGrip *
@@ -1395,7 +1395,7 @@ export function stepVehiclePhysics(
     camberGripBonus *
     kerbGripMod *
     assistGripBonus *
-    (vehicle.isOffTrack ? 0.76 : 1.0);
+    (vehicle.isOffTrack ? (isAssisted ? 0.82 : 0.76) : 1.0);
 
   vehicle.asphaltGripFactor = Number(surfaceGrip.toFixed(3));
 
@@ -1497,7 +1497,7 @@ export function stepVehiclePhysics(
   vehicle.redlineTremor = computeRedlineTremor(vehicle.rpm, vehicle.gear);
 
   const rpmNorm = (vehicle.rpm - 1200) / 7000;
-  const torqueCurve = 0.82 + Math.sin(clamp(rpmNorm, 0.05, 0.98) * Math.PI) * 0.34;
+  const torqueCurve = 0.85 + Math.sin(clamp(rpmNorm, 0.05, 0.98) * Math.PI) * 0.35;
   const gearMultipliers = [1.62, 1.30, 1.08, 0.94, 0.84];
   const gearMult = gearMultipliers[vehicle.gear - 1] ?? 1.0;
 
@@ -1530,11 +1530,11 @@ export function stepVehiclePhysics(
   if (vehicle.brake > 0.01) {
     // Anti-Lock Braking Modulation (ABS-like stability under heavy braking while turning in Pro-Assisted mode)
     const steerLoad = Math.abs(vehicle.steerAngle) / 0.45;
-    const absEfficiency = isAssisted ? 1.0 - steerLoad * 0.06 : 1.0 - steerLoad * 0.14;
+    const absEfficiency = isAssisted ? 1.0 - steerLoad * 0.05 : 1.0 - steerLoad * 0.14;
     const brakingTireEfficiency =
-      (0.78 + 0.24 * effectiveWeatherGrip) *
+      (0.80 + 0.24 * effectiveWeatherGrip) *
       rubberEffect.lineGripModifier *
-      clamp(0.74 + 0.28 * tireGripMult, 0.68, 1.12) *
+      clamp(0.76 + 0.28 * tireGripMult, 0.70, 1.14) *
       clamp(vehicle.verticalLoadG, 0.75, 1.2) *
       absEfficiency;
     if (forwardVel > 1.0) {
@@ -1557,7 +1557,7 @@ export function stepVehiclePhysics(
   // Degraded tire structural integrity increases rolling resistance slightly
   const tireIntegrityDrag = (1.0 - vehicle.tires.minIntegrity) * 260;
   // Forgiving off-track rolling resistance so dipping 2 wheels onto the grass verge never bogs the car down harshly
-  const offTrackPenalty = vehicle.isOffTrack ? (isAssisted ? 780 : 1150) : 0;
+  const offTrackPenalty = vehicle.isOffTrack ? (isAssisted ? 620 : 1050) : 0;
   const rollingRes =
     (offTrackPenalty > 0
       ? offTrackPenalty
@@ -1591,17 +1591,17 @@ export function stepVehiclePhysics(
   // Worn rear tires induce progressive power oversteer (attenuated by Traction Control in pro_assisted mode)
   const rearWearOversteer =
     Math.max(0, 0.85 - (vehicle.tires.rl.treadLife + vehicle.tires.rr.treadLife) * 0.5) *
-    (isAssisted ? 0.24 : 0.42);
+    (isAssisted ? 0.22 : 0.42);
   const wetOversteerMod =
     1.0 +
-    (1.0 - effectiveWeatherGrip) * (isAssisted ? 0.28 : 0.48) +
-    (vehicle.onMarbles ? 0.18 : 0) +
+    (1.0 - effectiveWeatherGrip) * (isAssisted ? 0.26 : 0.48) +
+    (vehicle.onMarbles ? 0.16 : 0) +
     rearWearOversteer;
   const throttleOversteer =
     1 +
     vehicle.throttle *
       (stats.oversteerBias - 1.0) *
-      (isAssisted ? 0.25 : 0.40) *
+      (isAssisted ? 0.24 : 0.40) *
       wetOversteerMod;
 
   const targetAngularVel =
@@ -1621,7 +1621,7 @@ export function stepVehiclePhysics(
   const isCounterSteering =
     vehicle.slipAngleRad * vehicle.steerAngle < -0.01 && Math.abs(vehicle.slipAngleRad) > 0.07;
   // Strong yaw stability damping during normal driving; relaxed briefly during collision shock so physical impacts rotate the chassis naturally
-  const baseYawDamping = isCounterSteering ? 30 : Math.abs(rawSteer) < 0.05 ? 23 : isAssisted ? 18 : 15;
+  const baseYawDamping = isCounterSteering ? 32 : Math.abs(rawSteer) < 0.05 ? 24 : isAssisted ? 19 : 15;
   const yawDamping = baseYawDamping * (1 - collisionShockRatio * 0.72);
   vehicle.angularVelocity +=
     (targetAngularVel - vehicle.angularVelocity) * Math.min(1, dt * yawDamping);
@@ -1631,16 +1631,16 @@ export function stepVehiclePhysics(
   const centrifugalLateral =
     -vehicle.angularVelocity *
     forwardVel *
-    (isAssisted ? 0.21 : 0.25) *
+    (isAssisted ? 0.20 : 0.25) *
     stats.oversteerBias *
     (vehicle.handbrake ? 2.05 : 1.0);
   lateralVel += centrifugalLateral * dt * 3.6;
 
   const absSlip = Math.abs(vehicle.slipAngleRad);
   const pacejkaGripFactor =
-    absSlip < 0.16
-      ? 1.08
-      : Math.max(isAssisted ? 0.82 : 0.74, 1.08 - (absSlip - 0.16) * (isAssisted ? 0.48 : 0.65));
+    absSlip < 0.18
+      ? 1.10
+      : Math.max(isAssisted ? 0.85 : 0.75, 1.10 - (absSlip - 0.18) * (isAssisted ? 0.44 : 0.65));
   const handbrakeLateralGrip = vehicle.handbrake ? 0.26 : pacejkaGripFactor;
   const lateralGripDamping =
     stats.cornerStiffness * surfaceGrip * handbrakeLateralGrip * (1 - collisionShockRatio * 0.58);

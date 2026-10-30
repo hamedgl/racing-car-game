@@ -8,6 +8,11 @@ import {
 } from '../game/types';
 import { TRACK_LIST } from '../game/tracks';
 import { formatLapTime } from '../game/format';
+import {
+  getCarBlueprintPng,
+  getChampionshipCrestPng,
+  getMarqueCrestPng,
+} from '../game/assets';
 
 interface LeaderboardModalProps {
   entries: LeaderboardEntry[];
@@ -48,6 +53,17 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
   const [callsignInput, setCallsignInput] = useState(driverName);
   const [errorMsg, setErrorMsg] = useState('');
   const [submitStatus, setSubmitStatus] = useState<'idle' | 'submitting' | 'saved'>('idle');
+
+  const crestPng = getChampionshipCrestPng();
+  const carBlueprintPng = getCarBlueprintPng(
+    selectedCar.id,
+    livery.bodyColor,
+    livery.stripeColor,
+    livery.stripeStyle,
+    livery.number,
+    livery.wheelFinish
+  );
+  const marqueCrestPng = getMarqueCrestPng(selectedCar.id);
 
   const filteredEntries = entries
     .filter((e) => e.trackId === filterTrack)
@@ -98,13 +114,21 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
       >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-[#f5f2eb]/15 pb-4">
-          <div>
-            <h2 className="font-display font-bold text-2xl text-[#f5f2eb] uppercase tracking-wide">
-              FIA Historic Global Timing Standings
-            </h2>
-            <p className="text-xs text-[#a39c8e]">
-              Live WebSocket Timing Server · <span className="font-mono-tabular text-[#f59e0b]">{onlineCount}</span> Connected Drivers
-            </p>
+          <div className="flex items-center gap-3.5">
+            <img
+              src={crestPng}
+              alt="FIA Historic Championship Crest"
+              referrerPolicy="no-referrer"
+              className="w-11 h-11 object-contain shrink-0"
+            />
+            <div>
+              <h2 className="font-display font-bold text-2xl text-[#f5f2eb] uppercase tracking-wide">
+                FIA Historic Global Timing Standings
+              </h2>
+              <p className="text-xs text-[#a39c8e]">
+                Live WebSocket Timing Server · <span className="font-mono-tabular text-[#f59e0b]">{onlineCount}</span> Connected Drivers
+              </p>
+            </div>
           </div>
           <button
             type="button"
@@ -115,12 +139,12 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
           </button>
         </div>
 
-        {/* Driver Callsign & Telemetry Registration Form */}
+        {/* Driver Callsign & Telemetry Registration Form with Active Machine Blueprint */}
         <form
           onSubmit={handleSaveDriverAndPost}
-          className="p-4 rounded bg-[#181614] border border-[#f5f2eb]/12 flex flex-col md:flex-row items-start md:items-end justify-between gap-4"
+          className="p-4 rounded bg-[#181614] border border-[#f5f2eb]/12 flex flex-col md:flex-row items-start md:items-center justify-between gap-4"
         >
-          <div className="w-full md:w-72">
+          <div className="w-full md:w-64">
             <label
               htmlFor="driver-callsign-input"
               className="block text-xs font-semibold text-[#cfc9bc] mb-1.5"
@@ -147,12 +171,28 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
             )}
           </div>
 
-          <div className="text-xs text-[#a39c8e] space-y-0.5 flex-1">
-            <div>
-              Registered Entry: <span className="text-[#f5f2eb] font-semibold">{selectedCar.name}</span> · #{livery.number}
+          <div className="flex items-center gap-3 flex-1 min-w-0">
+            <div className="relative w-32 h-16 rounded overflow-hidden border border-white/15 bg-[#090d16] shrink-0">
+              <img
+                src={carBlueprintPng}
+                alt={selectedCar.name}
+                referrerPolicy="no-referrer"
+                className="w-full h-full object-contain"
+              />
+              <img
+                src={marqueCrestPng}
+                alt="Marque Crest"
+                referrerPolicy="no-referrer"
+                className="absolute top-1 left-1 w-5 h-5 object-contain"
+              />
             </div>
-            <div className="font-mono-tabular">
-              Setup: {tuningLabel} · PI {effectiveStats.performanceIndex} · Top {effectiveStats.topSpeedKmh} KM/H
+            <div className="text-xs text-[#a39c8e] space-y-0.5 min-w-0">
+              <div className="truncate">
+                Registered Entry: <span className="text-[#f5f2eb] font-semibold">{selectedCar.name}</span> · #{livery.number}
+              </div>
+              <div className="font-mono-tabular truncate">
+                Setup: {tuningLabel} · PI {effectiveStats.performanceIndex} · Top {effectiveStats.topSpeedKmh} KM/H
+              </div>
             </div>
           </div>
 

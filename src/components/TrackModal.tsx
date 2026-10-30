@@ -7,7 +7,11 @@ import {
   TrackSpec,
   WeatherCondition,
 } from '../game/types';
-import { getTrackPreviewPng } from '../game/assets';
+import {
+  getChampionshipCrestPng,
+  getTireCompoundBadgePng,
+  getTrackPreviewPng,
+} from '../game/assets';
 
 interface TrackModalProps {
   selectedTrack: TrackSpec;
@@ -50,6 +54,9 @@ export const TrackModal: React.FC<TrackModalProps> = ({
   onCycleStartingCompound,
   onClose,
 }) => {
+  const crestPng = getChampionshipCrestPng();
+  const compoundBadgePng = getTireCompoundBadgePng(startingCompound);
+
   return (
     <div
       role="dialog"
@@ -62,13 +69,21 @@ export const TrackModal: React.FC<TrackModalProps> = ({
         style={{ backgroundColor: '#0e131d' }}
       >
         <div className="flex items-center justify-between border-b border-[#f5f2eb]/15 pb-4">
-          <div>
-            <h2 className="font-display font-bold text-2xl text-[#f5f2eb] uppercase tracking-wide">
-              Championship Levels, Mountain Circuits & Tire Strategy
-            </h2>
-            <p className="text-xs text-[#94a3b8]">
-              Select a 5-Stage Championship Career Level or choose any historic European circuit with 3D hills and pit lane service.
-            </p>
+          <div className="flex items-center gap-3.5">
+            <img
+              src={crestPng}
+              alt="Mille Corse Championship Crest"
+              referrerPolicy="no-referrer"
+              className="w-11 h-11 object-contain shrink-0"
+            />
+            <div>
+              <h2 className="font-display font-bold text-2xl text-[#f5f2eb] uppercase tracking-wide">
+                Championship Levels, Mountain Circuits & Tire Strategy
+              </h2>
+              <p className="text-xs text-[#94a3b8]">
+                Select a 5-Stage Championship Career Level or choose any historic European circuit with 3D hills and pit lane service.
+              </p>
+            </div>
           </div>
           <button
             type="button"
@@ -131,13 +146,21 @@ export const TrackModal: React.FC<TrackModalProps> = ({
           <button
             type="button"
             onClick={onCycleStartingCompound}
-            className="text-left p-2.5 rounded bg-[#0b0f17] hover:bg-[#1e293b] border border-[#f5f2eb]/10 transition-colors cursor-pointer"
+            className="text-left p-2.5 rounded bg-[#0b0f17] hover:bg-[#1e293b] border border-[#f5f2eb]/10 transition-colors cursor-pointer flex items-center gap-3"
           >
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-[#94a3b8]">
-              Starting Tire Compound
-            </div>
-            <div className="text-xs font-bold text-[#f59e0b] mt-0.5 truncate">
-              {COMPOUND_LABELS[startingCompound]}
+            <img
+              src={compoundBadgePng}
+              alt={`${startingCompound} Tire Compound`}
+              referrerPolicy="no-referrer"
+              className="w-9 h-9 object-contain shrink-0"
+            />
+            <div className="min-w-0">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-[#94a3b8]">
+                Starting Tire Compound
+              </div>
+              <div className="text-xs font-bold text-[#f59e0b] mt-0.5 truncate">
+                {COMPOUND_LABELS[startingCompound]}
+              </div>
             </div>
           </button>
 
@@ -217,10 +240,11 @@ export const TrackModal: React.FC<TrackModalProps> = ({
                     <img
                       src={previewPng}
                       alt={track.name}
+                      referrerPolicy="no-referrer"
                       className="w-full h-full object-cover"
                     />
                     <div className="absolute top-1.5 left-1.5 px-2 py-0.5 rounded bg-[#090d14]/85 border border-[#f5f2eb]/20 text-[10px] font-mono-tabular font-semibold text-[#f59e0b]">
-                      ⛰️ +{track.elevationGainM}m Hills
+                      +{track.elevationGainM}m Elevation
                     </div>
                     <div className="absolute bottom-1.5 right-1.5 w-16 h-14 rounded bg-[#090d14]/85 border border-[#f5f2eb]/20 p-1">
                       <svg viewBox="0 0 160 140" className="w-full h-full">

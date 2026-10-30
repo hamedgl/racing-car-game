@@ -1679,6 +1679,25 @@ export function buildClassicCarMesh(
     const handle = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.018, 0.11), chromeMat);
     handle.position.set(side * (handleSurf.stationHalfW * 0.98), chassisH + 0.14, -0.18);
     bodyGroup.add(handle);
+
+    // Cloisonné Scuderia Fender Shield Emblem behind front wheel arch
+    const shieldZ = frontWheelbaseZ - 0.33;
+    const shieldSurf = evalSurfaceAt(0, shieldZ);
+    const shieldBezel = new THREE.Mesh(
+      new THREE.BoxGeometry(0.014, 0.068, 0.054),
+      chromeMat
+    );
+    shieldBezel.position.set(side * (shieldSurf.stationHalfW * 0.985), 0.475, shieldZ);
+    const shieldEnamel = new THREE.Mesh(
+      new THREE.BoxGeometry(0.016, 0.056, 0.044),
+      new THREE.MeshStandardMaterial({
+        color: isBritish ? 0x065f46 : isProto ? 0x1d4ed8 : 0xfacc15,
+        roughness: 0.25,
+        metalness: 0.4,
+      })
+    );
+    shieldEnamel.position.set(side * (shieldSurf.stationHalfW * 0.987), 0.475, shieldZ);
+    bodyGroup.add(shieldBezel, shieldEnamel);
   }
 
   // 2. Sleek Tapered Fastback Cabin Greenhouse & Flush Painted Roof
@@ -1774,6 +1793,25 @@ export function buildClassicCarMesh(
   fuelLatch.position.set(fuelX, fuelSurf.y + 0.018, fuelZ - 0.01);
   fuelLatch.rotation.x = -fuelSurf.pitchSlope;
   bodyGroup.add(fuelBase, fuelLatch);
+
+  // Chrome Dzus Quarter-Turn Bonnet Fastener Plates & Hood Pins on Front Deck
+  const dzusZ = halfLen - 0.22;
+  for (const dx of [-0.30, 0.30]) {
+    const dSurf = evalSurfaceWithSlope(dx, dzusZ);
+    const dzusPlate = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.024, 0.024, 0.006, 14),
+      chromeMat
+    );
+    dzusPlate.position.set(dx, dSurf.y + 0.004, dzusZ);
+    dzusPlate.rotation.x = -dSurf.pitchSlope;
+    const dzusRing = new THREE.Mesh(
+      new THREE.TorusGeometry(0.014, 0.003, 8, 14).rotateX(Math.PI / 2),
+      chromeMat
+    );
+    dzusRing.position.set(dx, dSurf.y + 0.008, dzusZ);
+    dzusRing.rotation.x = Math.PI / 2 - dSurf.pitchSlope;
+    hoodPivot.add(dzusPlate, dzusRing);
+  }
 
   // 4. Museum-Grade 1967 GT Interior Cockpit:
   // Sculpted Curved Arched Leather Binnacle, Engine-Turned Perlage Fascia, Marque-Specific Veglia/Smiths/VDO/Stewart-Warner Dials,
@@ -1953,30 +1991,30 @@ export function buildClassicCarMesh(
     return pivot;
   };
 
-  createPedalAssembly(0.255, 0.026, 0.042); // Clutch pedal
-  const brakePedalPivot = createPedalAssembly(0.195, 0.030, 0.044); // Brake pedal
-  const throttlePedalPivot = createPedalAssembly(0.135, 0.024, 0.058); // Long organ-style throttle pedal
+  createPedalAssembly(0.245, 0.026, 0.042); // Clutch pedal (symmetric +0.055 from 0.190 centerline)
+  const brakePedalPivot = createPedalAssembly(0.190, 0.030, 0.044); // Brake pedal strictly on 0.190 driver centerline
+  const throttlePedalPivot = createPedalAssembly(0.135, 0.024, 0.058); // Organ-style throttle pedal (symmetric -0.055 from 0.190 centerline)
 
   // 4D. Multi-Layered Sculpted 1967 GT Dashboard Cowl, Split Bullnose Roll & Engine-Turned Fascia
-  // IMPORTANT: The arched driver binnacle spans x = [0.034 .. 0.346].
+  // IMPORTANT: The arched driver binnacle spans x = [0.034 .. 0.346], centered on x = 0.190.
   // All horizontal dashboard bullnose rolls, chrome top beads, and cowl slabs are strictly split
   // outside [0.034 .. 0.346] or positioned forward of z = 0.185 so NO horizontal line EVER cuts across the Speedometer or Tachometer!
   const dashWidth = bodyWidth * 0.64;
   const dashHalfW = dashWidth * 0.5;
   const binnacleCenterX = 0.190;
-  const binnacleBaseY = interiorFloorY + 0.136;
+  const binnacleBaseY = interiorFloorY + 0.112;
   const binnacleSpanW = 0.312; // spans x = 0.034 .. 0.346
-  const binnacleArchH = 0.104; // peaks at y = interiorFloorY + 0.240 to frame over the steering wheel crown
+  const binnacleArchH = 0.140; // peaks at y = interiorFloorY + 0.252 while legs reach down to knee-roll at +0.112
   const binnacleDepth = 0.092;
   const binnacleRightEdgeX = binnacleCenterX - binnacleSpanW * 0.5; // 0.034
   const binnacleLeftEdgeX = binnacleCenterX + binnacleSpanW * 0.5;  // 0.346
 
-  // Forward anti-glare cowl deck (sits at z = 0.305, rear edge at z = 0.190 — completely forward of the binnacle gauges at z = 0.128!)
+  // Forward anti-glare cowl deck (sits at z = 0.305, rear edge at z = 0.190 — completely forward of the binnacle gauges at z = 0.126!)
   const dashCowlTop = new THREE.Mesh(
     new THREE.BoxGeometry(dashWidth, 0.020, 0.23),
     crackleDashMat
   );
-  dashCowlTop.position.set(0, interiorFloorY + 0.178, 0.305);
+  dashCowlTop.position.set(0, interiorFloorY + 0.190, 0.305);
   dashCowlTop.rotation.x = 0.03;
   bodyGroup.add(dashCowlTop);
 
@@ -1997,20 +2035,20 @@ export function buildClassicCarMesh(
     dappledLightSweepMat
   );
   dappledLightSweepMesh.rotation.x = -Math.PI / 2 + 0.03;
-  dappledLightSweepMesh.position.set(0, interiorFloorY + 0.189, 0.295);
+  dappledLightSweepMesh.position.set(0, interiorFloorY + 0.201, 0.295);
   bodyGroup.add(dappledLightSweepMesh);
 
-  // Rolled stitched leather bullnose edge along the passenger/center dashboard (strictly from -dashHalfW to binnacleRightEdgeX = 0.032!)
+  // Rolled stitched leather bullnose edge along the passenger/center dashboard (strictly from -dashHalfW to binnacleRightEdgeX = 0.034!)
   const passBullnoseLen = Math.max(0.05, binnacleRightEdgeX - -dashHalfW);
   const passBullnoseCenterX = (-dashHalfW + binnacleRightEdgeX) * 0.5;
   const dashUpperBullnosePass = new THREE.Mesh(
     new THREE.CylinderGeometry(0.012, 0.012, passBullnoseLen, 16).rotateZ(Math.PI / 2),
     binnacleLeatherMat
   );
-  dashUpperBullnosePass.position.set(passBullnoseCenterX, interiorFloorY + 0.190, 0.138);
+  dashUpperBullnosePass.position.set(passBullnoseCenterX, interiorFloorY + 0.202, 0.138);
   bodyGroup.add(dashUpperBullnosePass);
 
-  // Short outer left bullnose wing outside the binnacle (from binnacleLeftEdgeX = 0.348 to +dashHalfW)
+  // Short outer left bullnose wing outside the binnacle (from binnacleLeftEdgeX = 0.346 to +dashHalfW)
   const outerLeftWingLen = Math.max(0.02, dashHalfW - binnacleLeftEdgeX);
   if (outerLeftWingLen > 0.02) {
     const dashUpperBullnoseLeft = new THREE.Mesh(
@@ -2019,7 +2057,7 @@ export function buildClassicCarMesh(
     );
     dashUpperBullnoseLeft.position.set(
       (binnacleLeftEdgeX + dashHalfW) * 0.5,
-      interiorFloorY + 0.190,
+      interiorFloorY + 0.202,
       0.138
     );
     bodyGroup.add(dashUpperBullnoseLeft);
@@ -2031,12 +2069,12 @@ export function buildClassicCarMesh(
       new THREE.BoxGeometry(0.145, 0.006, 0.042),
       chromeMat
     );
-    defrosterFrame.position.set(ventX, interiorFloorY + 0.189, 0.35);
+    defrosterFrame.position.set(ventX, interiorFloorY + 0.201, 0.35);
     const defrosterGrid = new THREE.Mesh(
       new THREE.BoxGeometry(0.135, 0.007, 0.032),
       darkTrimMat
     );
-    defrosterGrid.position.set(ventX, interiorFloorY + 0.190, 0.35);
+    defrosterGrid.position.set(ventX, interiorFloorY + 0.202, 0.35);
     bodyGroup.add(defrosterFrame, defrosterGrid);
   }
 
@@ -2044,33 +2082,33 @@ export function buildClassicCarMesh(
     new THREE.BoxGeometry(0.068, 0.005, 0.024),
     brassMat
   );
-  chassisPlaque.position.set(0, interiorFloorY + 0.189, 0.33);
+  chassisPlaque.position.set(0, interiorFloorY + 0.201, 0.33);
   bodyGroup.add(chassisPlaque);
 
   // Main contoured dashboard body (recessed forward at z = 0.222 so it never intersects the binnacle backing plate)
   const dashConsole = new THREE.Mesh(
-    new THREE.BoxGeometry(dashWidth, 0.092, 0.148),
+    new THREE.BoxGeometry(dashWidth, 0.102, 0.148),
     crackleDashMat
   );
-  dashConsole.position.set(0, interiorFloorY + 0.136, 0.222);
+  dashConsole.position.set(0, interiorFloorY + 0.144, 0.222);
 
   // Engine-turned aluminum instrument fascia positioned at z = 0.140 (front face at z = 0.134, strictly behind
   // binnacleBackMesh at z = 0.131) and split outside the upper binnacle so there is zero gap and zero seam!
   const dashAlumFasciaPass = new THREE.Mesh(
-    new THREE.BoxGeometry(passBullnoseLen + 0.024, 0.086, 0.010),
+    new THREE.BoxGeometry(passBullnoseLen + 0.024, 0.096, 0.010),
     engineTurnedMat
   );
-  dashAlumFasciaPass.position.set(passBullnoseCenterX + 0.012, interiorFloorY + 0.140, 0.140);
+  dashAlumFasciaPass.position.set(passBullnoseCenterX + 0.012, interiorFloorY + 0.148, 0.140);
   bodyGroup.add(dashConsole, dashAlumFasciaPass);
 
   if (outerLeftWingLen > 0.02) {
     const dashAlumFasciaLeft = new THREE.Mesh(
-      new THREE.BoxGeometry(outerLeftWingLen + 0.024, 0.086, 0.010),
+      new THREE.BoxGeometry(outerLeftWingLen + 0.024, 0.096, 0.010),
       engineTurnedMat
     );
     dashAlumFasciaLeft.position.set(
       (binnacleLeftEdgeX + dashHalfW) * 0.5 - 0.012,
-      interiorFloorY + 0.140,
+      interiorFloorY + 0.148,
       0.140
     );
     bodyGroup.add(dashAlumFasciaLeft);
@@ -2081,19 +2119,19 @@ export function buildClassicCarMesh(
     new THREE.BoxGeometry(passBullnoseLen, 0.004, 0.015),
     chromeMat
   );
-  dashFasciaTopBead.position.set(passBullnoseCenterX, interiorFloorY + 0.185, 0.137);
+  dashFasciaTopBead.position.set(passBullnoseCenterX, interiorFloorY + 0.197, 0.137);
 
   // Lower padded leather knee-roll bolster along bottom of dashboard
   const dashKneeRoll = new THREE.Mesh(
     new THREE.CylinderGeometry(0.013, 0.013, bodyWidth * 0.62, 14).rotateZ(Math.PI / 2),
     binnacleLeatherMat
   );
-  dashKneeRoll.position.set(0, interiorFloorY + 0.095, 0.135);
+  dashKneeRoll.position.set(0, interiorFloorY + 0.098, 0.135);
 
   bodyGroup.add(dashFasciaTopBead, dashKneeRoll);
 
   // 4E. Smooth Compound-Curved Arched Leather Instrument Binnacle Cowling
-  // Curves smoothly from x = 0.034 to x = 0.346, peaking at y = interiorFloorY + 0.228
+  // Curves smoothly from x = 0.034 to x = 0.346, peaking at y = interiorFloorY + 0.252
   const archedBinnacleGeo = buildArchedBinnacleGeometry(
     binnacleSpanW,
     binnacleArchH,
@@ -2128,7 +2166,7 @@ export function buildClassicCarMesh(
 
   // Seamless engine-turned aluminum & anti-glare gauge well backing plate sealing the entire arched binnacle opening
   const binnacleBackShape = new THREE.Shape();
-  binnacleBackShape.moveTo(-binnacleSpanW * 0.5, -0.038);
+  binnacleBackShape.moveTo(-binnacleSpanW * 0.5, -0.014);
   for (let i = 0; i <= 56; i++) {
     const theta = Math.PI * (1 - i / 56);
     binnacleBackShape.lineTo(
@@ -2136,7 +2174,7 @@ export function buildClassicCarMesh(
       Math.sin(theta) * binnacleArchH
     );
   }
-  binnacleBackShape.lineTo(binnacleSpanW * 0.5, -0.038);
+  binnacleBackShape.lineTo(binnacleSpanW * 0.5, -0.014);
   binnacleBackShape.closePath();
   const binnacleBackMesh = new THREE.Mesh(
     new THREE.ExtrudeGeometry(binnacleBackShape, { depth: 0.008, bevelEnabled: false }),
@@ -2147,7 +2185,7 @@ export function buildClassicCarMesh(
 
   // Dynamic Cockpit PointLight (active on all devices; responds to tree canopy flicker & tunnel sodium lamps!)
   const cockpitDynamicLight = new THREE.PointLight(0xfff4d6, 0.95, 1.45, 1.35);
-  cockpitDynamicLight.position.set(0.12, interiorFloorY + 0.215, 0.04);
+  cockpitDynamicLight.position.set(0.12, interiorFloorY + 0.228, 0.04);
   bodyGroup.add(cockpitDynamicLight);
 
   // 4F. Deep-Dish 3D Chrome-Bezel Instrument Pods with Crisp High-Contrast Dial Faces & Precision Needles
@@ -2232,22 +2270,22 @@ export function buildClassicCarMesh(
     return needlePivot;
   };
 
-  // Symmetrical Primary Gauges centered on x = 0.190 inside the upper steering wheel window:
-  // Left Primary Gauge: Speedometer (0–320 KM/H) at x = 0.236 (0.190 + 0.046)
+  // Symmetrical Primary Gauges centered on x = 0.190 inside the arched binnacle above the steering wheel crown:
+  // Left Primary Gauge: Speedometer (0–320 KM/H) at x = 0.236 (0.190 + 0.046), y = interiorFloorY + 0.178
   const speedoNeedlePivot = createGaugePod(
     0.236,
-    interiorFloorY + 0.164,
+    interiorFloorY + 0.178,
     0.126,
-    0.041,
+    0.040,
     getSpeedometerDialFaceTexture(spec.bodyStyle, maxAnisotropy)
   );
 
-  // Right Primary Gauge: Tachometer (0–9000 RPM) at x = 0.144 (0.190 - 0.046)
+  // Right Primary Gauge: Tachometer (0–9000 RPM) at x = 0.144 (0.190 - 0.046), y = interiorFloorY + 0.178
   const tachNeedlePivot = createGaugePod(
     0.144,
-    interiorFloorY + 0.164,
+    interiorFloorY + 0.178,
     0.126,
-    0.041,
+    0.040,
     getTachometerDialFaceTexture(spec.bodyStyle, maxAnisotropy)
   );
 
@@ -2272,9 +2310,9 @@ export function buildClassicCarMesh(
   });
 
   const shiftLampSpecs: Array<{ x: number; y: number; r: number; mat: THREE.MeshStandardMaterial }> = [
-    { x: 0.205, y: interiorFloorY + 0.194, r: 0.0054, mat: shiftGreenMat },
-    { x: 0.190, y: interiorFloorY + 0.198, r: 0.0064, mat: shiftAmberMat },
-    { x: 0.175, y: interiorFloorY + 0.194, r: 0.0070, mat: shiftLightMat },
+    { x: 0.205, y: interiorFloorY + 0.210, r: 0.0054, mat: shiftGreenMat },
+    { x: 0.190, y: interiorFloorY + 0.214, r: 0.0064, mat: shiftAmberMat },
+    { x: 0.175, y: interiorFloorY + 0.210, r: 0.0070, mat: shiftLightMat },
   ];
   for (const lamp of shiftLampSpecs) {
     const bezel = new THREE.Mesh(
@@ -2291,28 +2329,28 @@ export function buildClassicCarMesh(
   // Evenly spaced at x = 0.004, -0.042, -0.088, -0.134 with radius = 0.0205 so they never collide with the Halda Twinmaster!
   const oilNeedlePivot = createGaugePod(
     0.004,
-    interiorFloorY + 0.162,
+    interiorFloorY + 0.172,
     0.129,
     0.0205,
     getAuxDialFaceTexture(isBritish || isProto ? 'OIL' : 'OLIO', 'BAR', spec.bodyStyle, maxAnisotropy)
   );
   const waterNeedlePivot = createGaugePod(
     -0.042,
-    interiorFloorY + 0.162,
+    interiorFloorY + 0.172,
     0.129,
     0.0205,
     getAuxDialFaceTexture(isBritish || isProto ? 'WATER' : 'ACQUA', '°C', spec.bodyStyle, maxAnisotropy)
   );
   const fuelNeedlePivot = createGaugePod(
     -0.088,
-    interiorFloorY + 0.162,
+    interiorFloorY + 0.172,
     0.129,
     0.0205,
     getAuxDialFaceTexture(isBritish || isProto ? 'FUEL' : 'BENZINA', 'LITRI', spec.bodyStyle, maxAnisotropy)
   );
   const ampNeedlePivot = createGaugePod(
     -0.134,
-    interiorFloorY + 0.162,
+    interiorFloorY + 0.172,
     0.129,
     0.0205,
     getAuxDialFaceTexture('AMP', '+/- 30A', spec.bodyStyle, maxAnisotropy)
@@ -2324,10 +2362,10 @@ export function buildClassicCarMesh(
     new THREE.BoxGeometry(0.088, 0.018, 0.006),
     chromeMat
   );
-  heaterPlate.position.set(-0.088, interiorFloorY + 0.118, 0.132);
+  heaterPlate.position.set(-0.088, interiorFloorY + 0.124, 0.132);
   bodyGroup.add(heaterPlate);
   for (let hs = 0; hs < 2; hs++) {
-    const slotY = interiorFloorY + 0.121 - hs * 0.006;
+    const slotY = interiorFloorY + 0.127 - hs * 0.006;
     const slotGroove = new THREE.Mesh(
       new THREE.BoxGeometry(0.068, 0.0025, 0.007),
       darkTrimMat
@@ -2348,7 +2386,7 @@ export function buildClassicCarMesh(
 
   // 4G. Passenger Rally Instrument Cluster: Halda Twinmaster Mechanical Computer & Dual Heuer Monte-Carlo Stopwatches
   const haldaGroup = new THREE.Group();
-  haldaGroup.position.set(-0.226, interiorFloorY + 0.156, 0.132);
+  haldaGroup.position.set(-0.226, interiorFloorY + 0.166, 0.132);
   const haldaHousing = new THREE.Mesh(
     new THREE.BoxGeometry(0.118, 0.058, 0.018),
     darkTrimMat
@@ -2406,13 +2444,13 @@ export function buildClassicCarMesh(
       new THREE.CylinderGeometry(0.0055, 0.0065, 0.01, 8).rotateX(Math.PI / 2),
       chromeMat
     );
-    toggleNut.position.set(tx, interiorFloorY + 0.118, 0.132);
+    toggleNut.position.set(tx, interiorFloorY + 0.124, 0.132);
 
     const toggleBat = new THREE.Mesh(
       new THREE.CylinderGeometry(0.0018, 0.0036, 0.019, 8),
       chromeMat
     );
-    toggleBat.position.set(tx, interiorFloorY + 0.116, 0.123);
+    toggleBat.position.set(tx, interiorFloorY + 0.122, 0.123);
     toggleBat.rotation.x = i % 2 === 0 ? 0.58 : -0.45;
 
     // Miniature jewel indicator lamp above each toggle switch
@@ -2421,7 +2459,7 @@ export function buildClassicCarMesh(
       new THREE.SphereGeometry(0.0032, 8, 8),
       new THREE.MeshBasicMaterial({ color: jewelColor })
     );
-    jewelLamp.position.set(tx, interiorFloorY + 0.128, 0.131);
+    jewelLamp.position.set(tx, interiorFloorY + 0.134, 0.131);
 
     bodyGroup.add(toggleNut, toggleBat, jewelLamp);
 
@@ -2431,7 +2469,7 @@ export function buildClassicCarMesh(
         new THREE.BoxGeometry(0.012, 0.022, 0.014),
         redSafetyMat
       );
-      safetyGuard.position.set(tx, interiorFloorY + 0.127, 0.127);
+      safetyGuard.position.set(tx, interiorFloorY + 0.133, 0.127);
       safetyGuard.rotation.x = -0.45;
       bodyGroup.add(safetyGuard);
     }
@@ -2442,12 +2480,12 @@ export function buildClassicCarMesh(
     new THREE.CylinderGeometry(0.0085, 0.0095, 0.01, 14).rotateX(Math.PI / 2),
     chromeMat
   );
-  starterBezel.position.set(0.048, interiorFloorY + 0.120, 0.132);
+  starterBezel.position.set(0.048, interiorFloorY + 0.126, 0.132);
   const starterButton = new THREE.Mesh(
     new THREE.CylinderGeometry(0.0065, 0.0065, 0.012, 14).rotateX(Math.PI / 2),
     redSafetyMat
   );
-  starterButton.position.set(0.048, interiorFloorY + 0.120, 0.129);
+  starterButton.position.set(0.048, interiorFloorY + 0.126, 0.129);
   bodyGroup.add(starterBezel, starterButton);
 
   // Passenger Chrome Rally Grab Handle with twin standoffs
@@ -2455,20 +2493,20 @@ export function buildClassicCarMesh(
     new THREE.CylinderGeometry(0.0055, 0.0055, 0.14, 12).rotateZ(Math.PI / 2),
     chromeMat
   );
-  passengerGrabBar.position.set(-0.226, interiorFloorY + 0.114, 0.120);
+  passengerGrabBar.position.set(-0.226, interiorFloorY + 0.120, 0.120);
   for (const gx of [-0.285, -0.165]) {
     const standoff = new THREE.Mesh(
       new THREE.CylinderGeometry(0.006, 0.007, 0.02, 10).rotateX(Math.PI / 2),
       chromeMat
     );
-    standoff.position.set(gx, interiorFloorY + 0.114, 0.129);
+    standoff.position.set(gx, interiorFloorY + 0.120, 0.129);
     bodyGroup.add(standoff);
   }
   bodyGroup.add(passengerGrabBar);
 
   // 4I. Classic 1960s Dash-Cowl Chrome Stalk Rearview Mirror with Beveled Frame & Anti-Dazzle Flip Tab
   const intMirrorGroup = new THREE.Group();
-  intMirrorGroup.position.set(0.0, interiorFloorY + 0.184, 0.24);
+  intMirrorGroup.position.set(0.0, interiorFloorY + 0.196, 0.24);
   const intMirrorBase = new THREE.Mesh(
     new THREE.CylinderGeometry(0.008, 0.012, 0.008, 12),
     chromeMat
@@ -2502,34 +2540,43 @@ export function buildClassicCarMesh(
   intMirrorGroup.add(intMirrorBase, intMirrorStalk, intMirrorFrame, intMirrorGlass, antiDazzleTab);
   bodyGroup.add(intMirrorGroup);
 
-  // 4J. Full-Scale Authentic Nardi Slotted 3-Spoke Steering Wheel, Column Nacelle, Stalks & Ignition Key
-  // Centered on x = 0.190 at y = interiorFloorY + 0.118, z = -0.022 with wheelRadiusCockpit = 0.118 (68% larger diameter!)
-  // so the upper wheel rim arcs cleanly inside the arched binnacle crown while framing the
-  // Speedometer, Tachometer, and 3-Stage Shift Lights 100% unobstructed inside the upper wheel window!
+  // 4J. Precision-Scaled Nardi Slotted 3-Spoke Steering Wheel, Centered Column Nacelle, Stalks & Ignition Key
+  // Strictly centered on the driver column centerline (x = 0.190) across all 4 classic car models,
+  // positioned forward at z = 0.058, y = interiorFloorY + 0.080 with wheelRadiusCockpit = 0.068
+  // so the entire wheel rim, hub, and gloved hands sit cleanly below the Speedometer & Tachometer sightline with 0% dial obstruction!
+  const steeringColumnCenterX = 0.190;
   const steeringWheelPivot = new THREE.Group();
-  steeringWheelPivot.position.set(0.190, interiorFloorY + 0.118, -0.022);
-  steeringWheelPivot.rotation.x = -0.10;
+  steeringWheelPivot.position.set(steeringColumnCenterX, interiorFloorY + 0.080, 0.058);
+  steeringWheelPivot.rotation.x = -0.08;
 
   const steeringColumnNacelle = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.020, 0.026, 0.145, 16).rotateX(Math.PI / 2),
+    new THREE.CylinderGeometry(0.017, 0.022, 0.082, 16).rotateX(Math.PI / 2),
     crackleDashMat
   );
-  steeringColumnNacelle.position.set(0.190, interiorFloorY + 0.095, 0.058);
-  steeringColumnNacelle.rotation.x = -0.10;
-  bodyGroup.add(steeringColumnNacelle);
+  steeringColumnNacelle.position.set(steeringColumnCenterX, interiorFloorY + 0.083, 0.098);
+  steeringColumnNacelle.rotation.x = -0.08;
 
-  // Left & Right Chrome Column Stalks positioned cleanly on the column nacelle below the gauge sightline
+  // Concentric chrome column collar where the steering shaft enters the nacelle
+  const steeringColumnCollar = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.018, 0.018, 0.008, 16).rotateX(Math.PI / 2),
+    chromeMat
+  );
+  steeringColumnCollar.position.set(steeringColumnCenterX, interiorFloorY + 0.080, 0.062);
+  steeringColumnCollar.rotation.x = -0.08;
+  bodyGroup.add(steeringColumnNacelle, steeringColumnCollar);
+
+  // Left & Right Chrome Column Stalks symmetrically aligned on steeringColumnCenterX (x = 0.190)
   for (const stalkSide of [-1, 1]) {
     const stalkRod = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.0022, 0.0030, 0.076, 8).rotateZ(Math.PI / 2),
+      new THREE.CylinderGeometry(0.0020, 0.0026, 0.058, 8).rotateZ(Math.PI / 2),
       chromeMat
     );
-    stalkRod.position.set(0.190 + stalkSide * 0.044, interiorFloorY + 0.088, 0.042);
+    stalkRod.position.set(steeringColumnCenterX + stalkSide * 0.034, interiorFloorY + 0.082, 0.084);
     const stalkTip = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.0044, 0.0036, 0.016, 10).rotateZ(Math.PI / 2),
+      new THREE.CylinderGeometry(0.0038, 0.0030, 0.013, 10).rotateZ(Math.PI / 2),
       darkTrimMat
     );
-    stalkTip.position.set(0.190 + stalkSide * 0.082, interiorFloorY + 0.088, 0.042);
+    stalkTip.position.set(steeringColumnCenterX + stalkSide * 0.064, interiorFloorY + 0.082, 0.084);
     bodyGroup.add(stalkRod, stalkTip);
   }
 
@@ -2538,58 +2585,57 @@ export function buildClassicCarMesh(
     new THREE.CylinderGeometry(0.0095, 0.011, 0.012, 14).rotateX(Math.PI / 2),
     chromeMat
   );
-  ignitionBezel.position.set(0.072, interiorFloorY + 0.114, 0.131);
+  ignitionBezel.position.set(0.072, interiorFloorY + 0.118, 0.131);
   const ignitionKeyBlade = new THREE.Mesh(
     new THREE.BoxGeometry(0.008, 0.003, 0.018),
     brassMat
   );
-  ignitionKeyBlade.position.set(0.072, interiorFloorY + 0.114, 0.120);
+  ignitionKeyBlade.position.set(0.072, interiorFloorY + 0.118, 0.120);
   const ignitionKeyFob = new THREE.Mesh(
     new THREE.BoxGeometry(0.014, 0.026, 0.004),
     binnacleLeatherMat
   );
-  ignitionKeyFob.position.set(0.072, interiorFloorY + 0.098, 0.112);
+  ignitionKeyFob.position.set(0.072, interiorFloorY + 0.102, 0.112);
   ignitionKeyFob.rotation.z = 0.22;
   bodyGroup.add(ignitionBezel, ignitionKeyBlade, ignitionKeyFob);
 
-  const wheelRadiusCockpit = 0.118;
+  const wheelRadiusCockpit = 0.068;
   const wheelRim = new THREE.Mesh(
-    new THREE.TorusGeometry(wheelRadiusCockpit, 0.0108, 18, 48),
+    new THREE.TorusGeometry(wheelRadiusCockpit, 0.0076, 18, 48),
     mahoganyWheelMat
   );
   const wheelRivetRing = new THREE.Mesh(
-    new THREE.TorusGeometry(wheelRadiusCockpit, 0.0112, 8, 36),
+    new THREE.TorusGeometry(wheelRadiusCockpit, 0.0080, 8, 36),
     chromeMat
   );
   wheelRivetRing.scale.set(1, 1, 0.22);
 
   // Top-center yellow leather rally centering stripe on steering wheel rim
   const topCenterMarker = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.0116, 0.0116, 0.018, 12).rotateZ(Math.PI / 2),
+    new THREE.CylinderGeometry(0.0082, 0.0082, 0.013, 12).rotateZ(Math.PI / 2),
     new THREE.MeshBasicMaterial({ color: 0xfacc15 })
   );
   topCenterMarker.position.set(0, wheelRadiusCockpit, 0);
 
   // 3 Slotted Brushed-Alloy Spokes angled at 8-and-4 o'clock (-0.34, Math.PI + 0.34, -Math.PI/2)
-  // so the upper half of the steering wheel is a wide-open window to the Speedometer & Tachometer!
   for (const spokeAngle of [-0.34, Math.PI + 0.34, -Math.PI / 2]) {
     const spokeGroup = new THREE.Group();
     spokeGroup.rotation.z = spokeAngle;
     const spokeBar = new THREE.Mesh(
-      new THREE.BoxGeometry(0.106, 0.015, 0.0048),
+      new THREE.BoxGeometry(0.060, 0.0105, 0.0038),
       brushedAlumMat
     );
-    spokeBar.position.x = 0.060;
+    spokeBar.position.x = 0.035;
     spokeGroup.add(spokeBar);
 
     // Three graduated circular lightening holes along each alloy spoke
     for (const [hx, hr] of [
-      [0.038, 0.0048],
-      [0.060, 0.0044],
-      [0.082, 0.0038],
+      [0.022, 0.0032],
+      [0.035, 0.0029],
+      [0.047, 0.0025],
     ] as const) {
       const holeBezel = new THREE.Mesh(
-        new THREE.CylinderGeometry(hr, hr, 0.0058, 12).rotateX(Math.PI / 2),
+        new THREE.CylinderGeometry(hr, hr, 0.0046, 12).rotateX(Math.PI / 2),
         darkTrimMat
       );
       holeBezel.position.x = hx;
@@ -2600,16 +2646,16 @@ export function buildClassicCarMesh(
 
   // Machined 6-Bolt Alloy Hub Boss & Enameled Marque Horn Button
   const hubCenter = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.024, 0.026, 0.014, 20).rotateX(Math.PI / 2),
+    new THREE.CylinderGeometry(0.0155, 0.017, 0.011, 20).rotateX(Math.PI / 2),
     chromeMat
   );
   for (let b = 0; b < 6; b++) {
     const ba = (b * Math.PI) / 3;
     const hexBolt = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.0020, 0.0020, 0.016, 6).rotateX(Math.PI / 2),
+      new THREE.CylinderGeometry(0.0014, 0.0014, 0.012, 6).rotateX(Math.PI / 2),
       darkTrimMat
     );
-    hexBolt.position.set(Math.cos(ba) * 0.018, Math.sin(ba) * 0.018, -0.001);
+    hexBolt.position.set(Math.cos(ba) * 0.0115, Math.sin(ba) * 0.0115, -0.001);
     steeringWheelPivot.add(hexBolt);
   }
 
@@ -2621,7 +2667,7 @@ export function buildClassicCarMesh(
     ? 0x1e3a8a
     : 0xfacc15;
   const hornButton = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.014, 0.014, 0.018, 18).rotateX(Math.PI / 2),
+    new THREE.CylinderGeometry(0.0092, 0.0092, 0.013, 18).rotateX(Math.PI / 2),
     new THREE.MeshStandardMaterial({ color: hornAccentColor, roughness: 0.25, metalness: 0.3 })
   );
   steeringWheelPivot.add(wheelRim, wheelRivetRing, topCenterMarker, hubCenter, hornButton);
@@ -2645,9 +2691,10 @@ export function buildClassicCarMesh(
 
   for (const side of [-1, 1]) {
     const handGroup = new THREE.Group();
-    const gripX = side * 0.110;
-    const gripY = -0.022;
+    const gripX = side * 0.064;
+    const gripY = -0.012;
     handGroup.position.set(gripX, gripY, -0.002);
+    handGroup.scale.setScalar(0.76);
 
     const palmMesh = new THREE.Mesh(
       new THREE.BoxGeometry(0.028, 0.038, 0.026),
@@ -2942,120 +2989,307 @@ export function buildClassicCarMesh(
     bodyGroup.add(mGroup);
   }
 
-  // 5. Front Radiator Egg-Crate Grille, Carello Fog Lamps, Aero Splitter & Headlamps
+  // 5. Sculpted Front Radiator Egg-Crate Grille, Contoured Wrap-Around Chrome Bumpers, Overriders, Aero Chin Spoiler & Recessed Headlamps
+  const noseSurf = evalSurfaceAt(0, halfLen - 0.02);
+  const noseHalfW = noseSurf.stationHalfW;
+  const noseDeckY = noseSurf.y;
+  const grilleY = Math.min(0.258, noseDeckY - 0.115);
+  const grilleW = noseHalfW * 0.88;
+  const grilleH = 0.114;
+
   const grilleRecess = new THREE.Mesh(
-    new THREE.BoxGeometry(bodyWidth * 0.48, 0.15, 0.08),
+    new THREE.BoxGeometry(grilleW, grilleH, 0.020),
     darkTrimMat
   );
-  grilleRecess.position.set(0, 0.265, halfLen - 0.03);
+  grilleRecess.position.set(0, grilleY, halfLen + 0.004);
+
   const grilleSurround = new THREE.Mesh(
-    new THREE.BoxGeometry(bodyWidth * 0.5, 0.17, 0.035),
+    new THREE.BoxGeometry(grilleW + 0.028, grilleH + 0.024, 0.018),
     chromeMat
   );
-  grilleSurround.position.set(0, 0.265, halfLen - 0.008);
+  grilleSurround.position.set(0, grilleY, halfLen + 0.002);
   frontNosePivot.add(grilleRecess, grilleSurround);
 
-  for (const gy of [0.24, 0.265, 0.29]) {
-    const hBar = new THREE.Mesh(new THREE.BoxGeometry(bodyWidth * 0.46, 0.008, 0.025), chromeMat);
-    hBar.position.set(0, gy, halfLen + 0.002);
+  for (const gy of [grilleY - 0.026, grilleY, grilleY + 0.026]) {
+    const hBar = new THREE.Mesh(new THREE.BoxGeometry(grilleW - 0.016, 0.006, 0.014), chromeMat);
+    hBar.position.set(0, gy, halfLen + 0.013);
     frontNosePivot.add(hBar);
   }
+  for (let vx = -3; vx <= 3; vx++) {
+    const vBar = new THREE.Mesh(new THREE.BoxGeometry(0.0045, grilleH - 0.012, 0.012), brushedAlumMat);
+    vBar.position.set(vx * (grilleW * 0.125), grilleY, halfLen + 0.012);
+    frontNosePivot.add(vBar);
+  }
 
-  const fogBezelGeo = new THREE.CylinderGeometry(0.062, 0.062, 0.04, 16).rotateX(Math.PI / 2);
-  const fogLensGeo = new THREE.CylinderGeometry(0.052, 0.052, 0.046, 16).rotateX(Math.PI / 2);
+  const fogBezelGeo = new THREE.CylinderGeometry(0.042, 0.042, 0.024, 16).rotateX(Math.PI / 2);
+  const fogLensGeo = new THREE.CylinderGeometry(0.035, 0.035, 0.028, 16).rotateX(Math.PI / 2);
   for (const side of [-1, 1]) {
+    const fogX = side * (grilleW * 0.34);
     const fBezel = new THREE.Mesh(fogBezelGeo, chromeMat);
-    fBezel.position.set(side * 0.26, 0.265, halfLen + 0.015);
+    fBezel.position.set(fogX, grilleY, halfLen + 0.016);
     const fLens = new THREE.Mesh(fogLensGeo, fogLightMat);
-    fLens.position.set(side * 0.26, 0.265, halfLen + 0.018);
+    fLens.position.set(fogX, grilleY, halfLen + 0.019);
     frontNosePivot.add(fBezel, fLens);
   }
 
+  // Tapered front chin spoiler / aero splitter strictly within the lower nose sill width
+  const chinSplitterW = noseHalfW * 1.66;
   const chinSplitter = new THREE.Mesh(
-    new THREE.BoxGeometry(bodyWidth * 0.82, 0.032, 0.16),
+    new THREE.BoxGeometry(chinSplitterW, 0.028, 0.08),
     darkTrimMat
   );
-  chinSplitter.position.set(0, 0.165, halfLen - 0.02);
-  frontNosePivot.add(chinSplitter);
+  chinSplitter.position.set(0, 0.172, halfLen - 0.005);
+  const chinLipTube = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.014, 0.014, chinSplitterW, 14).rotateZ(Math.PI / 2),
+    darkTrimMat
+  );
+  chinLipTube.position.set(0, 0.172, halfLen + 0.032);
+  frontNosePivot.add(chinSplitter, chinLipTube);
 
-  for (const side of [-1, 1]) {
-    const bumperette = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.048, 0.055), chromeMat);
-    bumperette.position.set(side * (bodyWidth * 0.34), 0.215, halfLen + 0.02);
-    frontNosePivot.add(bumperette);
+  // Contoured 3D Wrap-Around Chrome Front Bumper Assembly with Chassis Mounting Brackets & Vertical Overriders
+  const frontBumperY = 0.214;
+  if (isBritish || is911) {
+    // Full-width compound-curved wrap-around chrome front bumper blade wrapping outside the nose corners
+    const fbPts = [
+      new THREE.Vector3(-noseHalfW * 0.98, frontBumperY, halfLen - 0.055),
+      new THREE.Vector3(-noseHalfW * 0.92, frontBumperY, halfLen + 0.028),
+      new THREE.Vector3(-noseHalfW * 0.50, frontBumperY, halfLen + 0.044),
+      new THREE.Vector3(0, frontBumperY, halfLen + 0.050),
+      new THREE.Vector3(noseHalfW * 0.50, frontBumperY, halfLen + 0.044),
+      new THREE.Vector3(noseHalfW * 0.92, frontBumperY, halfLen + 0.028),
+      new THREE.Vector3(noseHalfW * 0.98, frontBumperY, halfLen - 0.055),
+    ];
+    const fbCurve = new THREE.CatmullRomCurve3(fbPts);
+    const fbBladeGeo = new THREE.TubeGeometry(fbCurve, 36, 0.024, 16, false);
+    const fbBladeMesh = new THREE.Mesh(fbBladeGeo, chromeMat);
+    const fbRubGeo = new THREE.TubeGeometry(fbCurve, 36, 0.011, 12, false);
+    const fbRubMesh = new THREE.Mesh(fbRubGeo, darkTrimMat);
+    fbRubMesh.position.z = 0.016;
+    frontNosePivot.add(fbBladeMesh, fbRubMesh);
+  } else {
+    // Sculpted split quarter-bumperettes wrapping smoothly around each front nose corner (Italian GT & Proto)
+    for (const side of [-1, 1]) {
+      const qbPts = [
+        new THREE.Vector3(side * (noseHalfW * 0.32), frontBumperY, halfLen + 0.042),
+        new THREE.Vector3(side * (noseHalfW * 0.64), frontBumperY, halfLen + 0.038),
+        new THREE.Vector3(side * (noseHalfW * 0.92), frontBumperY, halfLen + 0.026),
+        new THREE.Vector3(side * (noseHalfW * 0.98), frontBumperY, halfLen - 0.055),
+      ];
+      const qbCurve = new THREE.CatmullRomCurve3(qbPts);
+      const qbGeo = new THREE.TubeGeometry(qbCurve, 24, 0.024, 16, false);
+      const qbMesh = new THREE.Mesh(qbGeo, chromeMat);
+      const qbRubGeo = new THREE.TubeGeometry(qbCurve, 24, 0.011, 12, false);
+      const qbRubMesh = new THREE.Mesh(qbRubGeo, darkTrimMat);
+      qbRubMesh.position.z = 0.015;
+      frontNosePivot.add(qbMesh, qbRubMesh);
+    }
   }
 
-  const lampXAbs = bodyWidth * 0.35;
-  const lampZ = halfLen - 0.045;
-  const lampSurf = evalSurfaceAt(lampXAbs, lampZ - 0.06);
-  const lampY = Math.min(lampSurf.y - 0.045, is911 ? 0.43 : 0.385);
-  const lampBezelGeo = new THREE.CylinderGeometry(0.115, 0.115, 0.06, 20).rotateX(Math.PI / 2);
-  const lampLensGeo = new THREE.CylinderGeometry(0.098, 0.098, 0.068, 20).rotateX(Math.PI / 2);
+  // Front Bumper Mounting Irons & Classic Chrome Vertical Overriders with Black Rubber Impact Pads
   for (const side of [-1, 1]) {
+    const overX = side * (noseHalfW * 0.38);
+    const mountIron = new THREE.Mesh(
+      new THREE.BoxGeometry(0.026, 0.024, 0.048),
+      darkTrimMat
+    );
+    mountIron.position.set(overX, frontBumperY, halfLen + 0.018);
+
+    const overriderBody = new THREE.Mesh(
+      new THREE.BoxGeometry(0.036, 0.082, 0.036),
+      chromeMat
+    );
+    overriderBody.position.set(overX, frontBumperY + 0.008, halfLen + 0.042);
+
+    const overriderPad = new THREE.Mesh(
+      new THREE.BoxGeometry(0.028, 0.068, 0.012),
+      darkTrimMat
+    );
+    overriderPad.position.set(overX, frontBumperY + 0.008, halfLen + 0.058);
+    frontNosePivot.add(mountIron, overriderBody, overriderPad);
+  }
+
+  // Fender-Integrated Headlamps with Chrome Bezels emerging cleanly from the front pontoon fenders
+  const lampXAbs = noseHalfW * 0.68;
+  const lampZ = halfLen + 0.004;
+  const lampSurf = evalSurfaceAt(lampXAbs, halfLen - 0.04);
+  const lampY = Math.min(lampSurf.y - 0.048, is911 ? 0.365 : isProto ? 0.305 : 0.335);
+  const lampRadius = isProto ? 0.068 : 0.076;
+  const lampBucketGeo = new THREE.CylinderGeometry(lampRadius * 1.04, lampRadius * 1.10, 0.09, 20).rotateX(Math.PI / 2);
+  const lampBezelGeo = new THREE.CylinderGeometry(lampRadius, lampRadius * 1.04, 0.032, 20).rotateX(Math.PI / 2);
+  const lampLensGeo = new THREE.CylinderGeometry(lampRadius * 0.86, lampRadius * 0.86, 0.038, 20).rotateX(Math.PI / 2);
+  for (const side of [-1, 1]) {
+    const bucket = new THREE.Mesh(lampBucketGeo, bodyPaintMat);
+    bucket.position.set(side * lampXAbs, lampY, lampZ - 0.028);
     const bezel = new THREE.Mesh(lampBezelGeo, chromeMat);
-    bezel.position.set(side * lampXAbs, lampY, lampZ);
+    bezel.position.set(side * lampXAbs, lampY, lampZ + 0.006);
     const lens = new THREE.Mesh(lampLensGeo, headlightMat);
-    lens.position.set(side * lampXAbs, lampY, lampZ + 0.008);
-    frontNosePivot.add(bezel, lens);
+    lens.position.set(side * lampXAbs, lampY, lampZ + 0.010);
+    frontNosePivot.add(bucket, bezel, lens);
+
+    // Front Fender Corner Amber Indicator / Marker Lamp with Chrome Bezel
+    const markerX = side * (noseHalfW * 0.83);
+    const markerY = frontBumperY + 0.048;
+    const markerBezel = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.022, 0.024, 0.020, 14).rotateX(Math.PI / 2),
+      chromeMat
+    );
+    markerBezel.position.set(markerX, markerY, halfLen + 0.006);
+    const markerLens = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.017, 0.017, 0.024, 14).rotateX(Math.PI / 2),
+      amberTurnMat
+    );
+    markerLens.position.set(markerX, markerY, halfLen + 0.009);
+    frontNosePivot.add(markerBezel, markerLens);
   }
 
-  // 6. Clean Rear Kammtail Transom, Taillights, License Plate & Hollow Quad Exhausts
-  const rearTransomInsert = new THREE.Mesh(
-    new THREE.BoxGeometry(bodyWidth * 0.8, 0.16, 0.035),
-    darkTrimMat
+  // FIA Scrutineering Painted Steel Front Tow Loop
+  const towHookMat = new THREE.MeshStandardMaterial({
+    color: 0xef4444,
+    roughness: 0.35,
+    metalness: 0.45,
+  });
+  const frontTowEye = new THREE.Mesh(
+    new THREE.TorusGeometry(0.024, 0.006, 10, 18).rotateX(Math.PI / 2),
+    towHookMat
   );
-  rearTransomInsert.position.set(0, 0.42, -halfLen - 0.002);
+  frontTowEye.position.set(noseHalfW * 0.28, 0.175, halfLen + 0.048);
+  frontNosePivot.add(frontTowEye);
+
+  // 6. Sculpted Rear Kammtail Transom, Contoured Wrap-Around Rear Bumpers with Overriders, Taillights, License Plate & Quad Exhausts
+  const tailSurf = evalSurfaceAt(0, -halfLen + 0.02);
+  const tailHalfW = tailSurf.stationHalfW;
+  const transomW = tailHalfW * 1.54; // Stays strictly inside the rear compound-curved quarter flanks on all 4 models!
+  const transomY = isProto ? 0.395 : 0.415;
+
   const rearTransomChromeTrim = new THREE.Mesh(
-    new THREE.BoxGeometry(bodyWidth * 0.82, 0.18, 0.022),
+    new THREE.BoxGeometry(transomW + 0.024, 0.146, 0.016),
     chromeMat
   );
-  rearTransomChromeTrim.position.set(0, 0.42, -halfLen + 0.004);
-  rearValenceGroup.add(rearTransomInsert, rearTransomChromeTrim);
+  rearTransomChromeTrim.position.set(0, transomY, -halfLen - 0.006);
 
-  const rearDiffuser = new THREE.Mesh(
-    new THREE.BoxGeometry(bodyWidth * 0.72, 0.11, 0.16),
+  const rearTransomInsert = new THREE.Mesh(
+    new THREE.BoxGeometry(transomW, 0.130, 0.016),
     darkTrimMat
   );
-  rearDiffuser.position.set(0, 0.21, -halfLen + 0.06);
+  rearTransomInsert.position.set(0, transomY, -halfLen - 0.009);
+  rearValenceGroup.add(rearTransomChromeTrim, rearTransomInsert);
+
+  // Recessed Underbody Rear Diffuser Valance with Vertical Aero Strakes
+  const rearDiffuserW = tailHalfW * 1.32;
+  const rearDiffuser = new THREE.Mesh(
+    new THREE.BoxGeometry(rearDiffuserW, 0.088, 0.09),
+    darkTrimMat
+  );
+  rearDiffuser.position.set(0, 0.205, -halfLen - 0.008);
   const diffHousing = new THREE.Mesh(
-    new THREE.BoxGeometry(0.24, 0.12, 0.22),
+    new THREE.BoxGeometry(0.24, 0.11, 0.20),
     brushedAlumMat
   );
-  diffHousing.position.set(0, 0.23, -halfLen + 0.24);
+  diffHousing.position.set(0, 0.225, -halfLen + 0.12);
   rearValenceGroup.add(rearDiffuser, diffHousing);
 
-  const tailRingGeo = new THREE.CylinderGeometry(0.056, 0.056, 0.045, 18).rotateX(Math.PI / 2);
-  const tailLensGeo = new THREE.CylinderGeometry(0.045, 0.045, 0.054, 18).rotateX(Math.PI / 2);
-  const turnLensGeo = new THREE.CylinderGeometry(0.038, 0.038, 0.054, 16).rotateX(Math.PI / 2);
+  for (const fx of [-0.32, -0.14, 0.14, 0.32]) {
+    const diffuserFin = new THREE.Mesh(
+      new THREE.BoxGeometry(0.012, 0.075, 0.08),
+      darkTrimMat
+    );
+    diffuserFin.position.set(fx, 0.198, -halfLen - 0.018);
+    rearValenceGroup.add(diffuserFin);
+  }
+
+  // Contoured 3D Wrap-Around Chrome Rear Bumper Assembly with Corner Returns, Mounting Irons & Vertical Overriders
+  const rearBumperY = 0.292;
+  if (isBritish || is911) {
+    // Full-width contoured chrome rear bumper blade wrapping smoothly outside the rear quarter panels
+    const rbPts = [
+      new THREE.Vector3(-tailHalfW * 0.98, rearBumperY, -halfLen + 0.055),
+      new THREE.Vector3(-tailHalfW * 0.92, rearBumperY, -halfLen - 0.030),
+      new THREE.Vector3(-tailHalfW * 0.50, rearBumperY, -halfLen - 0.044),
+      new THREE.Vector3(0, rearBumperY, -halfLen - 0.048),
+      new THREE.Vector3(tailHalfW * 0.50, rearBumperY, -halfLen - 0.044),
+      new THREE.Vector3(tailHalfW * 0.92, rearBumperY, -halfLen - 0.030),
+      new THREE.Vector3(tailHalfW * 0.98, rearBumperY, -halfLen + 0.055),
+    ];
+    const rbCurve = new THREE.CatmullRomCurve3(rbPts);
+    const rbBladeGeo = new THREE.TubeGeometry(rbCurve, 36, 0.024, 16, false);
+    const rbBladeMesh = new THREE.Mesh(rbBladeGeo, chromeMat);
+    const rbRubGeo = new THREE.TubeGeometry(rbCurve, 36, 0.011, 12, false);
+    const rbRubMesh = new THREE.Mesh(rbRubGeo, darkTrimMat);
+    rbRubMesh.position.z = -0.016;
+    rearValenceGroup.add(rbBladeMesh, rbRubMesh);
+  } else {
+    // Sculpted split wrap-around chrome rear quarter-bumperettes (Italian GT & Proto)
+    for (const side of [-1, 1]) {
+      const rqbPts = [
+        new THREE.Vector3(side * 0.24, rearBumperY, -halfLen - 0.042),
+        new THREE.Vector3(side * (tailHalfW * 0.58), rearBumperY, -halfLen - 0.040),
+        new THREE.Vector3(side * (tailHalfW * 0.92), rearBumperY, -halfLen - 0.028),
+        new THREE.Vector3(side * (tailHalfW * 0.98), rearBumperY, -halfLen + 0.055),
+      ];
+      const rqbCurve = new THREE.CatmullRomCurve3(rqbPts);
+      const rqbGeo = new THREE.TubeGeometry(rqbCurve, 24, 0.024, 16, false);
+      const rqbMesh = new THREE.Mesh(rqbGeo, chromeMat);
+      const rqbRubGeo = new THREE.TubeGeometry(rqbCurve, 24, 0.011, 12, false);
+      const rqbRubMesh = new THREE.Mesh(rqbRubGeo, darkTrimMat);
+      rqbRubMesh.position.z = -0.015;
+      rearValenceGroup.add(rqbMesh, rqbRubMesh);
+    }
+  }
+
+  // Rear Bumper Mounting Irons & Vertical Chrome Overriders with Rubber Impact Pads
+  for (const side of [-1, 1]) {
+    const rOverX = side * 0.28;
+    const rMountIron = new THREE.Mesh(
+      new THREE.BoxGeometry(0.026, 0.024, 0.048),
+      darkTrimMat
+    );
+    rMountIron.position.set(rOverX, rearBumperY, -halfLen - 0.018);
+
+    const rOverriderBody = new THREE.Mesh(
+      new THREE.BoxGeometry(0.036, 0.082, 0.036),
+      chromeMat
+    );
+    rOverriderBody.position.set(rOverX, rearBumperY + 0.008, -halfLen - 0.042);
+
+    const rOverriderPad = new THREE.Mesh(
+      new THREE.BoxGeometry(0.028, 0.068, 0.012),
+      darkTrimMat
+    );
+    rOverriderPad.position.set(rOverX, rearBumperY + 0.008, -halfLen - 0.058);
+    rearValenceGroup.add(rMountIron, rOverriderBody, rOverriderPad);
+  }
+
+  const tailRingGeo = new THREE.CylinderGeometry(0.046, 0.046, 0.024, 18).rotateX(Math.PI / 2);
+  const tailLensGeo = new THREE.CylinderGeometry(0.038, 0.038, 0.030, 18).rotateX(Math.PI / 2);
+  const turnLensGeo = new THREE.CylinderGeometry(0.032, 0.032, 0.030, 16).rotateX(Math.PI / 2);
 
   for (const side of [-1, 1]) {
-    const rBumper = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.048, 0.06), chromeMat);
-    rBumper.position.set(side * (bodyWidth * 0.31), 0.305, -halfLen - 0.022);
-    rearValenceGroup.add(rBumper);
-
-    for (const innerOffset of [0, 0.13]) {
-      const lx = side * (bodyWidth * 0.365 - innerOffset);
+    const outerLampX = transomW * 0.42;
+    for (const innerOffset of [0, 0.112]) {
+      const lx = side * (outerLampX - innerOffset);
       const tailRing = new THREE.Mesh(tailRingGeo, chromeMat);
-      tailRing.position.set(lx, 0.42, -halfLen - 0.02);
+      tailRing.position.set(lx, transomY, -halfLen - 0.016);
       const tailLens = new THREE.Mesh(tailLensGeo, brakeLightsMat);
-      tailLens.position.set(lx, 0.42, -halfLen - 0.025);
+      tailLens.position.set(lx, transomY, -halfLen - 0.020);
       rearValenceGroup.add(tailRing, tailLens);
     }
 
+    const turnX = side * (outerLampX - 0.210);
     const turnRing = new THREE.Mesh(tailRingGeo, chromeMat);
-    turnRing.scale.set(0.82, 0.82, 1);
-    turnRing.position.set(side * (bodyWidth * 0.365 - 0.245), 0.42, -halfLen - 0.02);
+    turnRing.scale.set(0.84, 0.84, 1);
+    turnRing.position.set(turnX, transomY, -halfLen - 0.016);
     const turnLens = new THREE.Mesh(turnLensGeo, amberTurnMat);
-    turnLens.position.set(side * (bodyWidth * 0.365 - 0.245), 0.42, -halfLen - 0.025);
+    turnLens.position.set(turnX, transomY, -halfLen - 0.020);
     rearValenceGroup.add(turnRing, turnLens);
   }
 
-  const plateFrame = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.135, 0.026), chromeMat);
-  plateFrame.position.set(0, 0.42, -halfLen - 0.02);
+  const plateFrame = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.112, 0.014), chromeMat);
+  plateFrame.position.set(0, transomY, -halfLen - 0.016);
   const plateFace = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.35, 0.115),
+    new THREE.PlaneGeometry(0.296, 0.096),
     new THREE.MeshBasicMaterial({ map: getVintageLicensePlateTexture() })
   );
-  plateFace.position.set(0, 0.42, -halfLen - 0.035);
+  plateFace.position.set(0, transomY, -halfLen - 0.024);
   plateFace.rotation.y = Math.PI;
   rearValenceGroup.add(plateFrame, plateFace);
 
@@ -3087,6 +3321,20 @@ export function buildClassicCarMesh(
     transparent: true,
     opacity: 0.95,
   });
+
+  const silencerGeo = new THREE.CylinderGeometry(0.056, 0.056, 0.28, 16).rotateX(Math.PI / 2);
+  for (const sx of isBritish ? [0] : [-0.31, 0.31]) {
+    const silencer = new THREE.Mesh(silencerGeo, brushedAlumMat);
+    silencer.position.set(sx, 0.195, -halfLen + 0.18);
+    rearValenceGroup.add(silencer);
+  }
+
+  const rearTowEye = new THREE.Mesh(
+    new THREE.TorusGeometry(0.024, 0.006, 10, 18).rotateX(Math.PI / 2),
+    towHookMat
+  );
+  rearTowEye.position.set(-0.20, 0.20, -halfLen - 0.042);
+  rearValenceGroup.add(rearTowEye);
 
   for (const px of exhaustOffsets) {
     const pipeOuter = new THREE.Mesh(outerPipeGeo, chromeMat);

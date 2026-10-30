@@ -7,7 +7,12 @@ import {
   TireCompound,
   TrackSpec,
 } from '../game/types';
-import { getChampionshipCrestPng } from '../game/assets';
+import {
+  getCarBlueprintPng,
+  getChampionshipCrestPng,
+  getMarqueCrestPng,
+  getTireCompoundBadgePng,
+} from '../game/assets';
 
 interface TitleScreenProps {
   selectedCar: ClassicCarSpec;
@@ -39,6 +44,33 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
   onOpenLeaderboards,
 }) => {
   const crestPng = useMemo(() => getChampionshipCrestPng(), []);
+  const marqueCrestPng = useMemo(
+    () => getMarqueCrestPng(selectedCar.id),
+    [selectedCar.id]
+  );
+  const blueprintPng = useMemo(
+    () =>
+      getCarBlueprintPng(
+        selectedCar.id,
+        livery.bodyColor,
+        livery.stripeColor,
+        livery.stripeStyle,
+        livery.number,
+        livery.wheelFinish
+      ),
+    [
+      selectedCar.id,
+      livery.bodyColor,
+      livery.stripeColor,
+      livery.stripeStyle,
+      livery.number,
+      livery.wheelFinish,
+    ]
+  );
+  const tireBadgePng = useMemo(
+    () => getTireCompoundBadgePng(startingCompound),
+    [startingCompound]
+  );
 
   return (
     <div className="fixed inset-0 z-10 pointer-events-none flex flex-col justify-between p-6 md:p-10">
@@ -47,7 +79,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
         className="fixed inset-0 -z-10 pointer-events-none"
         style={{
           background:
-            'linear-gradient(90deg, rgba(11,15,23,0.92) 0%, rgba(11,15,23,0.74) 35%, rgba(11,15,23,0.12) 66%, rgba(11,15,23,0.0) 100%)',
+            'linear-gradient(90deg, rgba(11,15,23,0.94) 0%, rgba(11,15,23,0.78) 36%, rgba(11,15,23,0.12) 66%, rgba(11,15,23,0.0) 100%)',
         }}
       />
 
@@ -69,14 +101,15 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
       </div>
 
       {/* Asymmetric Left-Third Hero Lockup & Primary Actions (Leaves >= 65% of 3D world open) */}
-      <div className="max-w-md w-full my-auto space-y-6 pointer-events-auto">
+      <div className="max-w-md w-full my-auto space-y-5 pointer-events-auto">
         {/* High-DPI Cloisonné Enamel Crest PNG + Display Lockup */}
-        <div className="space-y-3">
+        <div className="space-y-2.5">
           <div className="flex items-center gap-4">
             <img
               src={crestPng}
               alt="Mille Corse 1967 Cloisonné Crest"
-              className="w-20 h-20 md:w-24 md:h-24 object-contain shrink-0 drop-shadow-[0_6px_16px_rgba(0,0,0,0.85)]"
+              referrerPolicy="no-referrer"
+              className="w-20 h-20 md:w-22 md:h-22 object-contain shrink-0 drop-shadow-[0_6px_16px_rgba(0,0,0,0.85)]"
             />
             <div>
               <div className="text-[11px] font-semibold tracking-[0.26em] uppercase text-[#f59e0b]">
@@ -98,31 +131,54 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
           </p>
         </div>
 
-        {/* Active Paddock Spec Readout (Unboxed clean typography with tabular numerals) */}
-        <div className="border-t border-b border-[#f5f2eb]/15 py-3.5 space-y-2">
-          <div className="flex items-center justify-between text-xs text-[#b8b1a3]">
-            <span>Active Chassis</span>
-            <span className="text-[#f5f2eb] font-semibold">
-              {selectedCar.name} · #{livery.number} · {startingCompound.toUpperCase()} TIRES
-            </span>
+        {/* Live Carrozzeria Homologation Blueprint & Paddock Technical Spec Card */}
+        <div className="border-t border-b border-[#f5f2eb]/15 py-3 space-y-2.5">
+          <div className="relative h-32 w-full rounded overflow-hidden border border-[#f5f2eb]/15 bg-[#090d16]">
+            <img
+              src={blueprintPng}
+              alt={`${selectedCar.name} Orthographic Blueprint`}
+              referrerPolicy="no-referrer"
+              className="w-full h-full object-contain"
+            />
+            <img
+              src={marqueCrestPng}
+              alt={`${selectedCar.name} Marque Crest`}
+              referrerPolicy="no-referrer"
+              className="absolute bottom-1.5 left-2 w-9 h-9 object-contain drop-shadow"
+            />
+            <img
+              src={tireBadgePng}
+              alt={`${startingCompound} Tire Compound`}
+              referrerPolicy="no-referrer"
+              className="absolute bottom-1.5 right-2 w-9 h-9 object-contain drop-shadow"
+            />
           </div>
-          <div className="flex items-center justify-between text-xs text-[#b8b1a3]">
-            <span>Performance Spec</span>
-            <span className="font-mono-tabular text-[#f5f2eb]">
-              {effectiveStats.powerHp} HP · {effectiveStats.weightKg} KG · {effectiveStats.topSpeedKmh} KM/H · PI{' '}
-              <span className="text-[#f59e0b] font-semibold">{effectiveStats.performanceIndex}</span>
-            </span>
-          </div>
-          <div className="flex items-center justify-between text-xs text-[#b8b1a3]">
-            <span>Stage {activeLevel.level} Circuit</span>
-            <span className="text-[#f5f2eb] font-semibold">
-              {selectedTrack.name} (+{selectedTrack.elevationGainM}m · {selectedTrack.laps} Laps)
-            </span>
+
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-xs text-[#b8b1a3]">
+              <span>Active Chassis</span>
+              <span className="text-[#f5f2eb] font-semibold">
+                {selectedCar.name} · #{livery.number} · {startingCompound.toUpperCase()} TIRES
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-xs text-[#b8b1a3]">
+              <span>Performance Spec</span>
+              <span className="font-mono-tabular text-[#f5f2eb]">
+                {effectiveStats.powerHp} HP · {effectiveStats.weightKg} KG · {effectiveStats.topSpeedKmh} KM/H · PI{' '}
+                <span className="text-[#f59e0b] font-semibold">{effectiveStats.performanceIndex}</span>
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-xs text-[#b8b1a3]">
+              <span>Stage {activeLevel.level} Circuit</span>
+              <span className="text-[#f5f2eb] font-semibold">
+                {selectedTrack.name} (+{selectedTrack.elevationGainM}m · {selectedTrack.laps} Laps)
+              </span>
+            </div>
           </div>
         </div>
 
         {/* Primary CTA + Secondary Paddock Actions (<= 3 secondary actions) */}
-        <div className="space-y-3">
+        <div className="space-y-2.5">
           <button
             type="button"
             data-start="true"
