@@ -1,7 +1,17 @@
 import * as THREE from 'three';
-import { BreakablePropState, TrackRubberState, TrackSpec, WeatherState } from './types';
-import { findClosestTrackSample } from './tracks';
-import { createTrackBreakableProps } from './physics';
+import {
+  BreakablePropState,
+  RacingLinePointProfile,
+  TrackRubberState,
+  TrackSpec,
+  WeatherState,
+} from './types';
+import {
+  findClosestTrackSample,
+  findNonLocalTrackProximity,
+  isWorldPointClearOfTrack,
+} from './tracks';
+import { createTrackBreakableProps, evaluateRacingLineSegmentVisual } from './physics';
 import { TREE_CANOPY_SECTORS, TUNNEL_GALLERY_SECTORS } from './cockpitLighting';
 
 export interface ParticlePool {
@@ -35,6 +45,55 @@ export interface TrackEnvironmentRig {
   syncBreakablePropsVisuals: () => void;
   updateWeatherVisuals: (weather: WeatherState) => void;
   updateTrackRubberVisuals: (rubberState: TrackRubberState, weather: WeatherState) => void;
+  updateDynamicRacingLineVisuals: (
+    profile: RacingLinePointProfile[],
+    playerSampleIndex: number,
+    playerSpeedMs: number,
+    timeSec: number,
+    visible: boolean
+  ) => void;
+}
+
+function createRacingLineGuideTexture(maxAnisotropy: number): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 512;
+  const ctx = canvas.getContext('2d')!;
+  ctx.clearRect(0, 0, 256, 512);
+
+  // Feathered lateral alpha envelope with crisp dual edge rails and glowing center spine
+  const latGrad = ctx.createLinearGradient(0, 0, 256, 0);
+  latGrad.addColorStop(0.0, 'rgba(255, 255, 255, 0.0)');
+  latGrad.addColorStop(0.10, 'rgba(255, 255, 255, 0.25)');
+  latGrad.addColorStop(0.18, 'rgba(255, 255, 255, 0.88)');
+  latGrad.addColorStop(0.28, 'rgba(255, 255, 255, 0.52)');
+  latGrad.addColorStop(0.50, 'rgba(255, 255, 255, 0.76)');
+  latGrad.addColorStop(0.72, 'rgba(255, 255, 255, 0.52)');
+  latGrad.addColorStop(0.82, 'rgba(255, 255, 255, 0.88)');
+  latGrad.addColorStop(0.90, 'rgba(255, 255, 255, 0.25)');
+  latGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.0)');
+  ctx.fillStyle = latGrad;
+  ctx.fillRect(0, 0, 256, 512);
+
+  // Subtle forward-pointing telemetry chevrons repeated along V
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+  ctx.lineWidth = 10;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  for (let y = 40; y < 512; y += 84) {
+    ctx.beginPath();
+    ctx.moveTo(58, y + 26);
+    ctx.lineTo(128, y - 14);
+    ctx.lineTo(198, y + 26);
+    ctx.stroke();
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = maxAnisotropy;
+  return tex;
 }
 
 function createRacingLineRubberTextures(maxAnisotropy: number): {
@@ -646,22 +705,22 @@ export function buildTrackEnvironment(
     const srOuterX = s.x + s.rx * (halfW + skirtWidth);
     const srOuterZ = s.z + s.rz * (halfW + skirtWidth);
 
-    const checkVL = findClosestTrackSample(track, vlOuterX, vlOuterZ, i % n);
+    const checkVL = findNonLocalTrackProximity(track, vlOuterX, vlOuterZ, i % n, 22);
     const vlY =
-      checkVL.distSq < (checkVL.sample.width * 0.5 + kerbWidth + 0.6) ** 2
-        ? Math.min(ly - 0.65, checkVL.surfaceY - 0.85)
+      checkVL.minDistM < checkVL.halfWidth + kerbWidth + 2.5
+        ? Math.min(ly - 0.85, checkVL.surfaceY - 1.1)
         : ly - 0.18;
 
-    const checkVR = findClosestTrackSample(track, vrOuterX, vrOuterZ, i % n);
+    const checkVR = findNonLocalTrackProximity(track, vrOuterX, vrOuterZ, i % n, 22);
     const vrY =
-      checkVR.distSq < (checkVR.sample.width * 0.5 + kerbWidth + 0.6) ** 2
-        ? Math.min(ry - 0.65, checkVR.surfaceY - 0.85)
+      checkVR.minDistM < checkVR.halfWidth + kerbWidth + 2.5
+        ? Math.min(ry - 0.85, checkVR.surfaceY - 1.1)
         : ry - 0.18;
 
-    const checkSL = findClosestTrackSample(track, slOuterX, slOuterZ, i % n);
+    const checkSL = findNonLocalTrackProximity(track, slOuterX, slOuterZ, i % n, 22);
     const slY = Math.min(ly - 3.6, checkSL.surfaceY - 3.6);
 
-    const checkSR = findClosestTrackSample(track, srOuterX, srOuterZ, i % n);
+    const checkSR = findNonLocalTrackProximity(track, srOuterX, srOuterZ, i % n, 22);
     const srY = Math.min(ry - 3.6, checkSR.surfaceY - 3.6);
 
     // 6 shoulder vertices per station (3 left, 3 right — NO quad running under the road at -0.02m!)
@@ -847,6 +906,75 @@ export function buildTrackEnvironment(
   const racingLineMesh = new THREE.Mesh(rlGeo, racingLineMat);
   racingLineMesh.receiveShadow = !isSoftwareGl;
   envGroup.add(racingLineMesh);
+
+  // 2B-Guide. Dynamic Alpha-Blended 3D Telemetry Racing Line Path Overlay Ribbon
+  // Color-coded segments (Emerald = Accelerate, Amber = Coast/Turn-In, Crimson = Braking Zone)
+  const guidePositions: number[] = [];
+  const guideUvs: number[] = [];
+  const guideColors: number[] = [];
+  const guideIndices: number[] = [];
+  const guideHalfWidth = 0.72; // 1.44m wide precision ideal line ribbon
+
+  for (let i = 0; i <= n; i++) {
+    const s = samples[i % n];
+    const halfW = s.width * 0.5;
+    const centerOff = s.racingLineOffset;
+    const vCoord = (i / n) * 180;
+    const subOffsets = [-guideHalfWidth, 0, guideHalfWidth];
+    const subU = [0, 0.5, 1];
+
+    for (let k = 0; k < 3; k++) {
+      const lat = Math.max(-(halfW - 0.45), Math.min(halfW - 0.45, centerOff + subOffsets[k]));
+      const px = s.x + s.rx * lat;
+      const pz = s.z + s.rz * lat;
+      const py = evalRoadSurfaceYAtOffset(s, lat) + 0.026;
+      guidePositions.push(px, py, pz);
+      guideUvs.push(subU[k], vCoord);
+      guideColors.push(0.06, 0.78, 0.51);
+    }
+
+    if (i < n) {
+      const base = i * 3;
+      guideIndices.push(
+        base + 0,
+        base + 1,
+        base + 3,
+        base + 1,
+        base + 4,
+        base + 3,
+        base + 1,
+        base + 2,
+        base + 4,
+        base + 2,
+        base + 5,
+        base + 4
+      );
+    }
+  }
+
+  const guideGeo = new THREE.BufferGeometry();
+  guideGeo.setAttribute('position', new THREE.Float32BufferAttribute(guidePositions, 3));
+  guideGeo.setAttribute('uv', new THREE.Float32BufferAttribute(guideUvs, 2));
+  guideGeo.setAttribute('color', new THREE.Float32BufferAttribute(guideColors, 3));
+  guideGeo.setIndex(guideIndices);
+  guideGeo.computeVertexNormals();
+
+  const guideTex = createRacingLineGuideTexture(maxAnisotropy);
+  const guideMat = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    map: guideTex,
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.82,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    polygonOffset: true,
+    polygonOffsetFactor: -5,
+    polygonOffsetUnits: -5,
+  });
+  const guideMesh = new THREE.Mesh(guideGeo, guideMat);
+  guideMesh.renderOrder = 2;
+  envGroup.add(guideMesh);
 
   const kerbGeo = new THREE.BufferGeometry();
   kerbGeo.setAttribute('position', new THREE.Float32BufferAttribute(kerbPositions, 3));
@@ -1305,15 +1433,22 @@ export function buildTrackEnvironment(
   };
   syncBreakablePropsVisuals();
 
-  // 7. Trackside Marshal Observation Posts with Flags
+  // 7. Trackside Marshal Observation Posts with Flags (Verified Clear of All Track Segments)
   for (const mIdx of [Math.floor(n * 0.28), Math.floor(n * 0.65)]) {
     const ms = samples[mIdx];
     const mStand = new THREE.Group();
-    const mx = ms.x - ms.rx * (ms.width * 0.5 + 5.5);
-    const mz = ms.z - ms.rz * (ms.width * 0.5 + 5.5);
-    const mLookup = findClosestTrackSample(track, mx, mz);
+    let mDist = ms.width * 0.5 + 8.5;
+    let mx = ms.x - ms.rx * mDist;
+    let mz = ms.z - ms.rz * mDist;
+    let mClear = isWorldPointClearOfTrack(track, mx, mz, 5.5);
+    if (!mClear.clear) {
+      mx = ms.x + ms.rx * mDist;
+      mz = ms.z + ms.rz * mDist;
+      mClear = isWorldPointClearOfTrack(track, mx, mz, 5.5);
+    }
+    if (!mClear.clear) continue;
 
-    mStand.position.set(mx, mLookup.surfaceY, mz);
+    mStand.position.set(mx, mClear.surfaceY, mz);
     mStand.rotation.y = Math.atan2(ms.tx, ms.tz);
 
     const hutGeo = new THREE.BoxGeometry(2.4, 2.2, 2.4);
@@ -1340,7 +1475,7 @@ export function buildTrackEnvironment(
   // 8. Pit-Straight Grandstand with Tiered Spectator Seating, 3D Crowd & Cantilevered Canopy
   const standGroup = new THREE.Group();
   standGroup.position.set(
-    startS.x - startS.rx * (startS.width * 0.5 + 9.5),
+    startS.x - startS.rx * (startS.width * 0.5 + 12.5),
     startLookup.surfaceY,
     startS.z + 18
   );
@@ -1399,14 +1534,17 @@ export function buildTrackEnvironment(
   standGroup.add(standRoof);
   envGroup.add(standGroup);
 
-  // 9. Tall Silhouette Landmark
+  // 9. Tall Silhouette Landmark (Verified Clear of All Track Segments)
   const vistaSample = samples[(startLookup.sample.index + 52) % n];
   const landmarkGroup = new THREE.Group();
-  landmarkGroup.position.set(
-    vistaSample.x + vistaSample.rx * (vistaSample.width + 24),
-    vistaSample.y,
-    vistaSample.z
-  );
+  let lmDist = vistaSample.width * 0.5 + 34;
+  let lmx = vistaSample.x + vistaSample.rx * lmDist;
+  let lmz = vistaSample.z + vistaSample.rz * lmDist;
+  if (!isWorldPointClearOfTrack(track, lmx, lmz, 14).clear) {
+    lmx = vistaSample.x - vistaSample.rx * (lmDist + 18);
+    lmz = vistaSample.z - vistaSample.rz * (lmDist + 18);
+  }
+  landmarkGroup.position.set(lmx, vistaSample.y, lmz);
 
   const stoneMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.85 });
   const spireMat = new THREE.MeshStandardMaterial({ color: 0x7f1d1d, roughness: 0.55 });
@@ -1422,15 +1560,16 @@ export function buildTrackEnvironment(
   envGroup.add(landmarkGroup);
 
   // 10. InstancedMesh Two-Tiered Pine/Cypress Trees (Roadside Canopy Avenues + Forest Groves) & Rock Formations
+  // Strictly validated via global `isWorldPointClearOfTrack` so no trunk or foliage EVER encroaches onto the road!
   const treeCount = 240;
-  const trunkGeo = new THREE.CylinderGeometry(0.32, 0.52, 3.6, 8);
-  trunkGeo.translate(0, 1.8, 0);
+  const trunkGeo = new THREE.CylinderGeometry(0.28, 0.44, 3.8, 8);
+  trunkGeo.translate(0, 1.9, 0);
   const trunkMat = new THREE.MeshStandardMaterial({ color: 0x451a03, roughness: 0.9 });
 
-  const foliageLowerGeo = new THREE.ConeGeometry(3.4, 5.2, 9);
-  foliageLowerGeo.translate(0, 5.2, 0);
-  const foliageUpperGeo = new THREE.ConeGeometry(2.5, 4.8, 9);
-  foliageUpperGeo.translate(0, 8.2, 0);
+  const foliageLowerGeo = new THREE.ConeGeometry(2.65, 4.8, 9);
+  foliageLowerGeo.translate(0, 5.6, 0);
+  const foliageUpperGeo = new THREE.ConeGeometry(1.95, 4.5, 9);
+  foliageUpperGeo.translate(0, 8.6, 0);
   const foliageMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.82 });
 
   const trunkInst = new THREE.InstancedMesh(trunkGeo, trunkMat, treeCount);
@@ -1438,8 +1577,8 @@ export function buildTrackEnvironment(
   const foliageUpperInst = new THREE.InstancedMesh(foliageUpperGeo, foliageMat, treeCount);
 
   const rockCount = 65;
-  const rockGeo = new THREE.DodecahedronGeometry(2.4, 0);
-  rockGeo.translate(0, 1.2, 0);
+  const rockGeo = new THREE.DodecahedronGeometry(2.2, 0);
+  rockGeo.translate(0, 1.1, 0);
   const rockMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.88 });
   const rockInst = new THREE.InstancedMesh(rockGeo, rockMat, rockCount);
 
@@ -1454,7 +1593,7 @@ export function buildTrackEnvironment(
 
   let placedTrees = 0;
 
-  // 10A. Overarching Roadside Tree Canopy Avenues (cast rhythmic dappled sunlight & shadow bands across the cockpit!)
+  // 10A. Roadside Tree Canopy Avenues (placed strictly outside the guardrail + 6.4m buffer & verified globally against all switchbacks)
   const canopyShadowPositions: Array<{ x: number; y: number; z: number; yaw: number; width: number }> = [];
   for (const sector of TREE_CANOPY_SECTORS) {
     const startI = Math.floor((sector.startIdx / 600) * n);
@@ -1462,25 +1601,24 @@ export function buildTrackEnvironment(
     for (let i = startI; i <= endI && placedTrees < treeCount - 2; i += 3) {
       const s = samples[i % n];
       const yaw = Math.atan2(s.tx, s.tz);
-      canopyShadowPositions.push({
-        x: s.x,
-        y: s.y + 0.018,
-        z: s.z,
-        yaw,
-        width: s.width - 0.6,
-      });
+      let anyTreeAtStation = false;
 
       for (const side of [-1, 1]) {
         if (placedTrees >= treeCount) break;
-        const vergeDist = s.width * 0.5 + 3.35;
+        const vergeDist = s.width * 0.5 + guardrailOffset + 6.4;
         const tx = s.x + s.rx * side * vergeDist;
         const tz = s.z + s.rz * side * vergeDist;
-        const scale = 1.08 + (i % 3) * 0.08;
+
+        // Global check against every segment of the circuit so trees never land on hairpins or adjacent legs
+        const clearance = isWorldPointClearOfTrack(track, tx, tz, 6.2);
+        if (!clearance.clear) continue;
+
+        anyTreeAtStation = true;
+        const scale = 0.96 + (i % 3) * 0.08;
 
         dummy.position.set(tx, s.y - 0.25, tz);
-        // Lean slightly inward over the road to form a lush overarching Mediterranean tree canopy
-        dummy.rotation.set(0, yaw, -side * 0.14);
-        dummy.scale.set(scale * 1.15, scale, scale * 1.15);
+        dummy.rotation.set(0, yaw, 0);
+        dummy.scale.set(scale, scale * 1.08, scale);
         dummy.updateMatrix();
 
         trunkInst.setMatrixAt(placedTrees, dummy.matrix);
@@ -1496,6 +1634,16 @@ export function buildTrackEnvironment(
         foliageUpperInst.setColorAt(placedTrees, colorHelper);
         placedTrees++;
       }
+
+      if (anyTreeAtStation) {
+        canopyShadowPositions.push({
+          x: s.x,
+          y: s.y + 0.018,
+          z: s.z,
+          yaw,
+          width: s.width - 0.6,
+        });
+      }
     }
   }
 
@@ -1506,7 +1654,7 @@ export function buildTrackEnvironment(
     const shadowBandMat = new THREE.MeshBasicMaterial({
       color: 0x090d16,
       transparent: true,
-      opacity: 0.34,
+      opacity: 0.28,
       depthWrite: false,
       polygonOffset: true,
       polygonOffsetFactor: -3,
@@ -1530,19 +1678,19 @@ export function buildTrackEnvironment(
     envGroup.add(shadowBandInst);
   }
 
-  // 10B. Scattered Background Forest Trees
+  // 10B. Scattered Background Forest Trees (Globally checked against all 600 track samples)
   let attempts = 0;
-  while (placedTrees < treeCount && attempts < 900) {
+  while (placedTrees < treeCount && attempts < 1100) {
     attempts++;
     const sIdx = Math.floor(rand() * n);
     const s = samples[sIdx];
     const side = rand() > 0.5 ? 1 : -1;
-    const distFromCenter = s.width * 0.5 + 10 + rand() * 55;
-    const tx = s.x + s.rx * side * distFromCenter + (rand() - 0.5) * 8;
-    const tz = s.z + s.rz * side * distFromCenter + (rand() - 0.5) * 8;
+    const distFromCenter = s.width * 0.5 + 12 + rand() * 58;
+    const tx = s.x + s.rx * side * distFromCenter + (rand() - 0.5) * 6;
+    const tz = s.z + s.rz * side * distFromCenter + (rand() - 0.5) * 6;
 
-    const check = findClosestTrackSample(track, tx, tz, sIdx);
-    if (check.distSq < (check.sample.width * 0.5 + 8.5) ** 2) continue;
+    const check = isWorldPointClearOfTrack(track, tx, tz, 8.5);
+    if (!check.clear) continue;
 
     const scale = 0.85 + rand() * 0.35;
     dummy.position.set(tx, check.surfaceY - 0.35, tz);
@@ -1663,17 +1811,17 @@ export function buildTrackEnvironment(
 
   let placedRocks = 0;
   attempts = 0;
-  while (placedRocks < rockCount && attempts < 400) {
+  while (placedRocks < rockCount && attempts < 600) {
     attempts++;
     const sIdx = Math.floor(rand() * n);
     const s = samples[sIdx];
     const side = rand() > 0.5 ? 1 : -1;
-    const distFromCenter = s.width * 0.5 + 8 + rand() * 42;
+    const distFromCenter = s.width * 0.5 + 10 + rand() * 44;
     const rx = s.x + s.rx * side * distFromCenter;
     const rz = s.z + s.rz * side * distFromCenter;
 
-    const check = findClosestTrackSample(track, rx, rz, sIdx);
-    if (check.distSq < (check.sample.width * 0.5 + 7.5) ** 2) continue;
+    const check = isWorldPointClearOfTrack(track, rx, rz, 7.5);
+    if (!check.clear) continue;
 
     const scaleX = 0.85 + rand() * 0.9;
     const scaleY = 0.65 + rand() * 0.7;
@@ -1751,6 +1899,39 @@ export function buildTrackEnvironment(
     }
   };
 
+  // Dynamic Alpha-Blended Telemetry Racing Line Updater (Live Braking / Coast / Acceleration Zones)
+  const updateDynamicRacingLineVisuals = (
+    profile: RacingLinePointProfile[],
+    playerSampleIndex: number,
+    playerSpeedMs: number,
+    timeSec: number,
+    visible: boolean
+  ) => {
+    guideMesh.visible = visible;
+    if (!visible || profile.length === 0) return;
+
+    // Animate chevron texture scroll forward along the racing line
+    guideTex.offset.y = -(timeSec * 0.65) % 1;
+
+    const colorAttr = guideGeo.getAttribute('color') as THREE.BufferAttribute;
+    for (let i = 0; i <= n; i++) {
+      const idx = i % n;
+      const pt = profile[idx] || profile[0];
+      const vis = evaluateRacingLineSegmentVisual(pt, playerSampleIndex, playerSpeedMs, n, timeSec);
+
+      // Modulate vertex brightness by alpha so upcoming 180m corridor glows vividly while distant segments stay subtle
+      const intensity = 0.26 + vis.alpha * 0.92;
+      const r = Math.min(1, vis.r * intensity);
+      const g = Math.min(1, vis.g * intensity);
+      const b = Math.min(1, vis.b * intensity);
+
+      colorAttr.setXYZ(i * 3 + 0, r * 0.88, g * 0.88, b * 0.88);
+      colorAttr.setXYZ(i * 3 + 1, r, g, b);
+      colorAttr.setXYZ(i * 3 + 2, r * 0.88, g * 0.88, b * 0.88);
+    }
+    colorAttr.needsUpdate = true;
+  };
+
   return {
     group: envGroup,
     roadMat,
@@ -1761,6 +1942,7 @@ export function buildTrackEnvironment(
     syncBreakablePropsVisuals,
     updateWeatherVisuals,
     updateTrackRubberVisuals,
+    updateDynamicRacingLineVisuals,
   };
 }
 

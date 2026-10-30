@@ -961,12 +961,15 @@ function buildUnifiedTireGeometry(wheelRadius: number, wheelWidth: number): THRE
   return geo;
 }
 
-let cachedUnifiedTireGeo: THREE.BufferGeometry | null = null;
+const cachedUnifiedTireGeos = new Map<string, THREE.BufferGeometry>();
 function getUnifiedTireGeometry(wheelRadius: number, wheelWidth: number): THREE.BufferGeometry {
-  if (!cachedUnifiedTireGeo) {
-    cachedUnifiedTireGeo = buildUnifiedTireGeometry(wheelRadius, wheelWidth);
+  const key = `${wheelRadius.toFixed(3)}_${wheelWidth.toFixed(3)}`;
+  let geo = cachedUnifiedTireGeos.get(key);
+  if (!geo) {
+    geo = buildUnifiedTireGeometry(wheelRadius, wheelWidth);
+    cachedUnifiedTireGeos.set(key, geo);
   }
-  return cachedUnifiedTireGeo;
+  return geo;
 }
 
 /**
@@ -983,6 +986,7 @@ function buildLoftedCoachworkGeometry(params: {
   is911: boolean;
   isProto: boolean;
   isBritish: boolean;
+  isF1?: boolean;
 }): THREE.BufferGeometry {
   const {
     bodyWidth,
@@ -994,6 +998,7 @@ function buildLoftedCoachworkGeometry(params: {
     is911,
     isProto,
     isBritish,
+    isF1 = false,
   } = params;
 
   const halfLen = bodyLength * 0.5;
@@ -1012,12 +1017,22 @@ function buildLoftedCoachworkGeometry(params: {
 
     const distFrontW = Math.abs(z - frontWheelZ);
     const distRearW = Math.abs(z - rearWheelZ);
-    const frontFlare = Math.exp(-Math.pow(distFrontW / 0.52, 2)) * 0.072;
-    const rearFlare = Math.exp(-Math.pow(distRearW / 0.56, 2)) * 0.092;
-    const doorWaistPinch = Math.exp(-Math.pow((z - 0.05) / 0.56, 2)) * 0.04;
+    const frontFlare = isF1 ? 0 : Math.exp(-Math.pow(distFrontW / 0.52, 2)) * 0.072;
+    const rearFlare = isF1 ? 0 : Math.exp(-Math.pow(distRearW / 0.56, 2)) * 0.092;
+    const doorWaistPinch = isF1
+      ? -Math.exp(-Math.pow((z + 0.05) / 0.65, 2)) * 0.08 // Sculpted F1 sidepod fuel-tank swell
+      : Math.exp(-Math.pow((z - 0.05) / 0.56, 2)) * 0.04;
 
     let planTaper = 1.0;
-    if (t > 0.8) {
+    if (isF1) {
+      if (t > 0.64) {
+        const nt = (t - 0.64) / 0.36;
+        planTaper = 1.0 - Math.pow(nt, 1.45) * 0.56;
+      } else if (t < 0.24) {
+        const rt = (0.24 - t) / 0.24;
+        planTaper = 1.0 - Math.pow(rt, 1.35) * 0.42;
+      }
+    } else if (t > 0.8) {
       const nt = (t - 0.8) / 0.2;
       planTaper = 1.0 - Math.pow(nt, 1.85) * (isBritish ? 0.22 : 0.18);
     } else if (t < 0.12) {
@@ -1028,24 +1043,34 @@ function buildLoftedCoachworkGeometry(params: {
     const stationHalfW = baseHalfW * planTaper + frontFlare + rearFlare - doorWaistPinch;
 
     let archCutoutY = 0;
-    if (distFrontW < wheelArchRadius) {
+    if (!isF1 && distFrontW < wheelArchRadius) {
       archCutoutY = Math.sqrt(wheelArchRadius * wheelArchRadius - distFrontW * distFrontW) * 0.78;
-    } else if (distRearW < wheelArchRadius) {
+    } else if (!isF1 && distRearW < wheelArchRadius) {
       archCutoutY = Math.sqrt(wheelArchRadius * wheelArchRadius - distRearW * distRearW) * 0.78;
     }
 
-    let centerH = chassisH + 0.21;
-    let fenderSwell = 0.024;
+    let centerH = chassisH + (isF1 ? 0.17 : 0.21);
+    let fenderSwell = isF1 ? 0.008 : 0.024;
 
-    if (t > 0.66) {
+    if (isF1) {
+      if (t > 0.62) {
+        const nt = (t - 0.62) / 0.38;
+        centerH -= Math.pow(nt, 1.65) * 0.21;
+      } else if (t < 0.28) {
+        const rt = (0.28 - t) / 0.28;
+        centerH -= Math.pow(rt, 1.4) * 0.08;
+      }
+    } else if (t > 0.66) {
       const nt = (t - 0.66) / 0.34;
       centerH -= Math.pow(nt, 1.85) * (is911 ? 0.27 : 0.24);
     }
 
-    fenderSwell += Math.exp(-Math.pow(distFrontW / 0.62, 2)) * (is911 ? 0.088 : 0.072);
-    fenderSwell += Math.exp(-Math.pow(distRearW / 0.68, 2)) * (isProto ? 0.086 : 0.076);
+    if (!isF1) {
+      fenderSwell += Math.exp(-Math.pow(distFrontW / 0.62, 2)) * (is911 ? 0.088 : 0.072);
+      fenderSwell += Math.exp(-Math.pow(distRearW / 0.68, 2)) * (isProto ? 0.086 : 0.076);
+    }
 
-    if (z > 0.15 && z < frontWheelZ + 0.42) {
+    if (!isF1 && z > 0.15 && z < frontWheelZ + 0.42) {
       const hoodPhase = Math.sin(((z - 0.15) / (frontWheelZ + 0.27)) * Math.PI);
       if (isProto) {
         centerH -= hoodPhase * 0.032;
@@ -1055,7 +1080,7 @@ function buildLoftedCoachworkGeometry(params: {
     }
 
     const spoilerCurve =
-      t >= 0.005 && t <= 0.12
+      !isF1 && t >= 0.005 && t <= 0.12
         ? Math.sin(clamp01((0.12 - t) / 0.115) * (Math.PI * 0.75)) *
           (is911 ? 0.11 : isProto ? 0.055 : 0.075)
         : 0;
@@ -1182,6 +1207,7 @@ function buildFastbackCabinGroup(params: {
   is911: boolean;
   isProto: boolean;
   isBritish: boolean;
+  isF1?: boolean;
   bodyPaintMat: THREE.Material;
   glassMat: THREE.Material;
   chromeMat: THREE.Material;
@@ -1194,6 +1220,7 @@ function buildFastbackCabinGroup(params: {
     is911,
     isProto,
     isBritish,
+    isF1 = false,
     bodyPaintMat,
     glassMat,
     chromeMat,
@@ -1201,7 +1228,49 @@ function buildFastbackCabinGroup(params: {
   } = params;
 
   const cabinGroup = new THREE.Group();
-  const baseY = chassisH + 0.178;
+  const baseY = chassisH + (isF1 ? 0.155 : 0.178);
+
+  if (isF1) {
+    // Open-Cockpit 1968 Formula 1 Wrap-Around Perspex Windscreen Visor & Padded Cockpit Coaming
+    const visorRadius = bodyWidth * 0.36;
+    const visorGeo = new THREE.CylinderGeometry(
+      visorRadius * 0.78,
+      visorRadius,
+      0.165,
+      24,
+      1,
+      true,
+      -Math.PI * 0.46,
+      Math.PI * 0.92
+    );
+    const visorMesh = new THREE.Mesh(visorGeo, glassMat);
+    visorMesh.position.set(0, baseY + 0.075, 0.28);
+    visorMesh.rotation.x = -0.38;
+    cabinGroup.add(visorMesh);
+
+    const visorRimPts: THREE.Vector3[] = [];
+    for (let i = 0; i <= 24; i++) {
+      const a = -Math.PI * 0.46 + (i / 24) * Math.PI * 0.92;
+      visorRimPts.push(
+        new THREE.Vector3(
+          Math.sin(a) * visorRadius * 0.82,
+          baseY + 0.145 - Math.cos(a) * 0.03,
+          0.24 + Math.cos(a) * visorRadius * 0.78
+        )
+      );
+    }
+    const visorRimGeo = new THREE.TubeGeometry(
+      new THREE.CatmullRomCurve3(visorRimPts),
+      24,
+      0.006,
+      8,
+      false
+    );
+    const visorRim = new THREE.Mesh(visorRimGeo, chromeMat);
+    cabinGroup.add(visorRim);
+    return cabinGroup;
+  }
+
   const cabFrontZ = isProto ? 0.68 : 0.56;
   const cabPeakZ = isBritish ? -0.08 : 0.04;
   const cabRearBaseZ = -1.42;
@@ -1497,30 +1566,41 @@ export function buildClassicCarMesh(
   const is911 = spec.bodyStyle === 'stuttgart_911';
   const isBritish = spec.bodyStyle === 'british_coupe';
   const isItalian = spec.bodyStyle === 'italian_gt';
+  const isF1 = spec.bodyStyle === 'f1_monoposto';
 
-  const bodyWidth = isProto ? 1.92 : 1.84;
-  const bodyLength = isBritish ? 4.34 : isProto ? 4.18 : 4.22;
+  const bodyWidth = isF1 ? 0.98 : isProto ? 1.92 : 1.84;
+  const bodyLength = isF1 ? 4.26 : isBritish ? 4.34 : isProto ? 4.18 : 4.22;
   const halfLen = bodyLength * 0.5;
-  const chassisH = isProto ? 0.42 : 0.48;
+  const chassisH = isF1 ? 0.38 : isProto ? 0.42 : 0.48;
 
   const wheelRadius = 0.35;
   const wheelContactY = wheelRadius - 0.005;
-  const wheelWidth = 0.28;
-  const frontWheelbaseZ = halfLen * 0.58;
-  const rearWheelbaseZ = -halfLen * 0.57;
-  const trackHalfW = bodyWidth * 0.405;
+  const wheelWidth = isF1 ? 0.34 : 0.28;
+  const frontWheelbaseZ = halfLen * (isF1 ? 0.61 : 0.58);
+  const rearWheelbaseZ = -halfLen * (isF1 ? 0.58 : 0.57);
+  const trackHalfW = isF1 ? 0.84 : bodyWidth * 0.405;
 
   const evalSurfaceAt = (x: number, z: number): { y: number; stationHalfW: number } => {
     const baseHalfW = bodyWidth * 0.5;
     const t = clamp01((z + halfLen) / bodyLength);
     const distFrontW = Math.abs(z - frontWheelbaseZ);
     const distRearW = Math.abs(z - rearWheelbaseZ);
-    const frontFlare = Math.exp(-Math.pow(distFrontW / 0.52, 2)) * 0.072;
-    const rearFlare = Math.exp(-Math.pow(distRearW / 0.56, 2)) * 0.092;
-    const doorWaistPinch = Math.exp(-Math.pow((z - 0.05) / 0.56, 2)) * 0.04;
+    const frontFlare = isF1 ? 0 : Math.exp(-Math.pow(distFrontW / 0.52, 2)) * 0.072;
+    const rearFlare = isF1 ? 0 : Math.exp(-Math.pow(distRearW / 0.56, 2)) * 0.092;
+    const doorWaistPinch = isF1
+      ? -Math.exp(-Math.pow((z + 0.05) / 0.65, 2)) * 0.08
+      : Math.exp(-Math.pow((z - 0.05) / 0.56, 2)) * 0.04;
 
     let planTaper = 1.0;
-    if (t > 0.8) {
+    if (isF1) {
+      if (t > 0.64) {
+        const nt = (t - 0.64) / 0.36;
+        planTaper = 1.0 - Math.pow(nt, 1.45) * 0.56;
+      } else if (t < 0.24) {
+        const rt = (0.24 - t) / 0.24;
+        planTaper = 1.0 - Math.pow(rt, 1.35) * 0.42;
+      }
+    } else if (t > 0.8) {
       const nt = (t - 0.8) / 0.2;
       planTaper = 1.0 - Math.pow(nt, 1.85) * (isBritish ? 0.22 : 0.18);
     } else if (t < 0.12) {
@@ -1529,16 +1609,26 @@ export function buildClassicCarMesh(
     }
     const stationHalfW = baseHalfW * planTaper + frontFlare + rearFlare - doorWaistPinch;
 
-    let centerH = chassisH + 0.21;
-    let fenderSwell = 0.024;
-    if (t > 0.66) {
+    let centerH = chassisH + (isF1 ? 0.17 : 0.21);
+    let fenderSwell = isF1 ? 0.008 : 0.024;
+    if (isF1) {
+      if (t > 0.62) {
+        const nt = (t - 0.62) / 0.38;
+        centerH -= Math.pow(nt, 1.65) * 0.21;
+      } else if (t < 0.28) {
+        const rt = (0.28 - t) / 0.28;
+        centerH -= Math.pow(rt, 1.4) * 0.08;
+      }
+    } else if (t > 0.66) {
       const nt = (t - 0.66) / 0.34;
       centerH -= Math.pow(nt, 1.85) * (is911 ? 0.27 : 0.24);
     }
-    fenderSwell += Math.exp(-Math.pow(distFrontW / 0.62, 2)) * (is911 ? 0.088 : 0.072);
-    fenderSwell += Math.exp(-Math.pow(distRearW / 0.68, 2)) * (isProto ? 0.086 : 0.076);
+    if (!isF1) {
+      fenderSwell += Math.exp(-Math.pow(distFrontW / 0.62, 2)) * (is911 ? 0.088 : 0.072);
+      fenderSwell += Math.exp(-Math.pow(distRearW / 0.68, 2)) * (isProto ? 0.086 : 0.076);
+    }
 
-    if (z > 0.15 && z < frontWheelbaseZ + 0.42) {
+    if (!isF1 && z > 0.15 && z < frontWheelbaseZ + 0.42) {
       const hoodPhase = Math.sin(((z - 0.15) / (frontWheelbaseZ + 0.27)) * Math.PI);
       if (isProto) {
         centerH -= hoodPhase * 0.032;
@@ -1548,7 +1638,7 @@ export function buildClassicCarMesh(
     }
 
     const spoilerCurve =
-      t >= 0.005 && t <= 0.12
+      !isF1 && t >= 0.005 && t <= 0.12
         ? Math.sin(clamp01((0.12 - t) / 0.115) * (Math.PI * 0.75)) *
           (is911 ? 0.11 : isProto ? 0.055 : 0.075)
         : 0;
@@ -1572,7 +1662,7 @@ export function buildClassicCarMesh(
 
   // 0. Soft Under-Chassis Contact Shadow / Ambient Occlusion Decal
   const contactShadowMesh = new THREE.Mesh(
-    new THREE.PlaneGeometry(bodyWidth * 1.22, bodyLength * 1.14),
+    new THREE.PlaneGeometry((isF1 ? 1.88 : bodyWidth) * 1.22, bodyLength * 1.14),
     new THREE.MeshBasicMaterial({
       map: getContactShadowTexture(),
       transparent: true,
@@ -1612,15 +1702,16 @@ export function buildClassicCarMesh(
     is911,
     isProto,
     isBritish,
+    isF1,
   });
   const mainBodyMesh = new THREE.Mesh(bodyGeo, bodyPaintMat);
   mainBodyMesh.castShadow = !isSoftwareGl;
   mainBodyMesh.receiveShadow = !isSoftwareGl;
   bodyGroup.add(mainBodyMesh);
 
-  // Sculpted Underbody Floor Pan & Recessed Inboard Wheel-Well Backing Plates (strictly inboard of tires!)
+  // Sculpted Underbody Floor Pan & Recessed Inboard Wheel-Well Backing Plates
   const underPan = new THREE.Mesh(
-    new THREE.BoxGeometry(bodyWidth * 0.62, 0.14, bodyLength * 0.84),
+    new THREE.BoxGeometry(bodyWidth * 0.62, 0.14, bodyLength * (isF1 ? 0.72 : 0.84)),
     darkTrimMat
   );
   underPan.position.set(0, 0.22, 0);
@@ -1634,60 +1725,79 @@ export function buildClassicCarMesh(
   );
   wheelWellBackingGeo.rotateZ(Math.PI / 2);
 
-  const wishboneArmGeo = new THREE.CylinderGeometry(0.011, 0.011, 0.18, 8).rotateZ(Math.PI / 2);
-  const coiloverDamperGeo = new THREE.CylinderGeometry(0.016, 0.014, 0.18, 8);
+  const wishboneArmLen = isF1 ? 0.44 : 0.18;
+  const wishboneArmGeo = new THREE.CylinderGeometry(0.011, 0.011, wishboneArmLen, 8).rotateZ(Math.PI / 2);
+  const coiloverDamperGeo = new THREE.CylinderGeometry(0.016, 0.014, isF1 ? 0.34 : 0.18, 8);
 
   const doorSurf = evalSurfaceAt(0, 0.04);
   const doorFlankX = doorSurf.stationHalfW * 0.992;
 
   for (const side of [-1, 1]) {
     for (const wz of [frontWheelbaseZ, rearWheelbaseZ]) {
-      // Recessed well inboard of the tire inner sidewall (trackHalfW - 0.14) so it never touches or clips the tire
-      const wellBacking = new THREE.Mesh(wheelWellBackingGeo, darkTrimMat);
-      wellBacking.position.set(side * (trackHalfW - 0.185), wheelContactY, wz);
-      bodyGroup.add(wellBacking);
+      if (!isF1) {
+        // Recessed well inboard of the tire inner sidewall (trackHalfW - 0.14) so it never touches or clips the tire
+        const wellBacking = new THREE.Mesh(wheelWellBackingGeo, darkTrimMat);
+        wellBacking.position.set(side * (trackHalfW - 0.185), wheelContactY, wz);
+        bodyGroup.add(wellBacking);
+      }
 
-      const upperArm = new THREE.Mesh(wishboneArmGeo, brushedAlumMat);
-      upperArm.position.set(side * (trackHalfW - 0.22), wheelContactY + 0.075, wz);
-      const lowerArm = new THREE.Mesh(wishboneArmGeo, brushedAlumMat);
-      lowerArm.position.set(side * (trackHalfW - 0.22), wheelContactY - 0.075, wz);
-      const strut = new THREE.Mesh(coiloverDamperGeo, chromeMat);
-      strut.position.set(side * (trackHalfW - 0.20), wheelContactY + 0.03, wz - 0.03);
-      strut.rotation.z = side * 0.24;
+      const armCenterX = isF1 ? side * 0.56 : side * (trackHalfW - 0.22);
+      const upperArm = new THREE.Mesh(wishboneArmGeo, chromeMat);
+      upperArm.position.set(armCenterX, wheelContactY + 0.075, wz + (isF1 ? 0.04 : 0));
+      upperArm.rotation.y = isF1 ? side * 0.18 : 0;
+
+      const upperRearArm = new THREE.Mesh(wishboneArmGeo, chromeMat);
+      upperRearArm.position.set(armCenterX, wheelContactY + 0.075, wz - (isF1 ? 0.05 : 0));
+      upperRearArm.rotation.y = isF1 ? -side * 0.22 : 0;
+
+      const lowerArm = new THREE.Mesh(wishboneArmGeo, chromeMat);
+      lowerArm.position.set(armCenterX, wheelContactY - 0.075, wz);
+      const strut = new THREE.Mesh(coiloverDamperGeo, brushedAlumMat);
+      strut.position.set(
+        isF1 ? side * 0.52 : side * (trackHalfW - 0.20),
+        wheelContactY + (isF1 ? 0.06 : 0.03),
+        wz - 0.03
+      );
+      strut.rotation.z = side * (isF1 ? 0.48 : 0.24);
       bodyGroup.add(upperArm, lowerArm, strut);
+      if (isF1) {
+        bodyGroup.add(upperRearArm);
+      }
     }
 
-    const doorRoundel = new THREE.Mesh(new THREE.CircleGeometry(0.23, 28), roundelMat);
-    doorRoundel.position.set(side * doorFlankX, 0.425, 0.04);
+    const doorRoundel = new THREE.Mesh(new THREE.CircleGeometry(isF1 ? 0.185 : 0.23, 28), roundelMat);
+    doorRoundel.position.set(side * doorFlankX, isF1 ? 0.365 : 0.425, isF1 ? 0.32 : 0.04);
     doorRoundel.rotation.y = side > 0 ? Math.PI / 2 : -Math.PI / 2;
     bodyGroup.add(doorRoundel);
 
-    const rockerTrim = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.02, 1.24), chromeMat);
-    rockerTrim.position.set(side * (doorSurf.stationHalfW * 0.945), 0.185, 0);
-    bodyGroup.add(rockerTrim);
+    if (!isF1) {
+      const rockerTrim = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.02, 1.24), chromeMat);
+      rockerTrim.position.set(side * (doorSurf.stationHalfW * 0.945), 0.185, 0);
+      bodyGroup.add(rockerTrim);
 
-    for (let g = 0; g < 3; g++) {
-      const gz = frontWheelbaseZ - 0.46 - g * 0.072;
-      const gSurf = evalSurfaceAt(0, gz);
-      const gill = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.12, 0.024), darkTrimMat);
-      gill.position.set(side * (gSurf.stationHalfW * 0.985), 0.43, gz);
-      gill.rotation.x = 0.28;
-      bodyGroup.add(gill);
+      for (let g = 0; g < 3; g++) {
+        const gz = frontWheelbaseZ - 0.46 - g * 0.072;
+        const gSurf = evalSurfaceAt(0, gz);
+        const gill = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.12, 0.024), darkTrimMat);
+        gill.position.set(side * (gSurf.stationHalfW * 0.985), 0.43, gz);
+        gill.rotation.x = 0.28;
+        bodyGroup.add(gill);
+      }
+
+      const handleSurf = evalSurfaceAt(0, -0.18);
+      const handle = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.018, 0.11), chromeMat);
+      handle.position.set(side * (handleSurf.stationHalfW * 0.98), chassisH + 0.14, -0.18);
+      bodyGroup.add(handle);
     }
 
-    const handleSurf = evalSurfaceAt(0, -0.18);
-    const handle = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.018, 0.11), chromeMat);
-    handle.position.set(side * (handleSurf.stationHalfW * 0.98), chassisH + 0.14, -0.18);
-    bodyGroup.add(handle);
-
-    // Cloisonné Scuderia Fender Shield Emblem behind front wheel arch
-    const shieldZ = frontWheelbaseZ - 0.33;
+    // Cloisonné Scuderia Fender Shield Emblem behind front wheel arch / cockpit cowl
+    const shieldZ = isF1 ? 0.58 : frontWheelbaseZ - 0.33;
     const shieldSurf = evalSurfaceAt(0, shieldZ);
     const shieldBezel = new THREE.Mesh(
       new THREE.BoxGeometry(0.014, 0.068, 0.054),
       chromeMat
     );
-    shieldBezel.position.set(side * (shieldSurf.stationHalfW * 0.985), 0.475, shieldZ);
+    shieldBezel.position.set(side * (shieldSurf.stationHalfW * 0.985), isF1 ? 0.43 : 0.475, shieldZ);
     const shieldEnamel = new THREE.Mesh(
       new THREE.BoxGeometry(0.016, 0.056, 0.044),
       new THREE.MeshStandardMaterial({
@@ -1696,11 +1806,11 @@ export function buildClassicCarMesh(
         metalness: 0.4,
       })
     );
-    shieldEnamel.position.set(side * (shieldSurf.stationHalfW * 0.987), 0.475, shieldZ);
+    shieldEnamel.position.set(side * (shieldSurf.stationHalfW * 0.987), isF1 ? 0.43 : 0.475, shieldZ);
     bodyGroup.add(shieldBezel, shieldEnamel);
   }
 
-  // 2. Sleek Tapered Fastback Cabin Greenhouse & Flush Painted Roof
+  // 2. Sleek Tapered Fastback Cabin Greenhouse or F1 Open-Cockpit Perspex Windscreen Visor
   const cabinGroup = buildFastbackCabinGroup({
     bodyWidth,
     bodyLength,
@@ -1708,6 +1818,7 @@ export function buildClassicCarMesh(
     is911,
     isProto,
     isBritish,
+    isF1,
     bodyPaintMat,
     glassMat,
     chromeMat,
@@ -1716,7 +1827,115 @@ export function buildClassicCarMesh(
   bodyGroup.add(cabinGroup);
 
   // 3. Chassis-Specific Authentic Hood, Engine Bay & Aero Hardware
-  if (isItalian) {
+  if (isF1) {
+    // 1968 Scuderia 312 F1 Exposed Rear 3.0L V12 Engine Block, 12 Spun-Aluminum Velocity Trumpets,
+    // Finned Magnesium Gearbox, White Bundle-of-Snakes High-Exit Exhausts & High-Mounted Aero Wings!
+    const v12Block = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.24, 0.72), darkTrimMat);
+    v12Block.position.set(0, 0.38, -0.84);
+    const v12CamCoversL = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.08, 0.68), brushedAlumMat);
+    v12CamCoversL.position.set(-0.14, 0.49, -0.84);
+    v12CamCoversL.rotation.z = 0.32;
+    const v12CamCoversR = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.08, 0.68), brushedAlumMat);
+    v12CamCoversR.position.set(0.14, 0.49, -0.84);
+    v12CamCoversR.rotation.z = -0.32;
+    bodyGroup.add(v12Block, v12CamCoversL, v12CamCoversR);
+
+    // 12 Polished Velocity Stack Trumpets (2 banks of 6 cylinders angled in a V)
+    const trumpetGeo = new THREE.CylinderGeometry(0.024, 0.016, 0.115, 12);
+    for (let cyl = 0; cyl < 6; cyl++) {
+      const cz = -0.56 - cyl * 0.105;
+      for (const bank of [-1, 1]) {
+        const stack = new THREE.Mesh(trumpetGeo, chromeMat);
+        stack.position.set(bank * 0.095, 0.57, cz);
+        stack.rotation.z = -bank * 0.24;
+        bodyGroup.add(stack);
+      }
+    }
+
+    // White Ceramic-Coated "Spaghetti" Bundle-of-Snakes High-Mounted F1 Exhaust Collectors
+    const whiteExhaustMat = new THREE.MeshStandardMaterial({
+      color: 0xf8fafc,
+      roughness: 0.38,
+      metalness: 0.18,
+    });
+    for (const side of [-1, 1]) {
+      const collectorPipe = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.036, 0.042, 0.96, 14).rotateX(Math.PI / 2),
+        whiteExhaustMat
+      );
+      collectorPipe.position.set(side * 0.16, 0.52, -1.16);
+      collectorPipe.rotation.x = 0.06;
+      const megaphoneTip = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.052, 0.036, 0.24, 14).rotateX(Math.PI / 2),
+        chromeMat
+      );
+      megaphoneTip.position.set(side * 0.16, 0.55, -1.72);
+      bodyGroup.add(collectorPipe, megaphoneTip);
+    }
+
+    // High-Mounted 1968 Rear Bi-Plane Downforce Wing on Twin Struts + Painted Endplates
+    const rearWingY = 0.92;
+    const rearWingZ = rearWheelbaseZ - 0.06;
+    const rearWingSpan = 1.46;
+    const rearWingMain = new THREE.Mesh(
+      new THREE.BoxGeometry(rearWingSpan, 0.024, 0.28),
+      bodyPaintMat
+    );
+    rearWingMain.position.set(0, rearWingY, rearWingZ);
+    rearWingMain.rotation.x = 0.18;
+
+    const rearWingFlap = new THREE.Mesh(
+      new THREE.BoxGeometry(rearWingSpan - 0.04, 0.016, 0.12),
+      brushedAlumMat
+    );
+    rearWingFlap.position.set(0, rearWingY + 0.042, rearWingZ - 0.11);
+    rearWingFlap.rotation.x = 0.34;
+    rearValenceGroup.add(rearWingMain, rearWingFlap);
+
+    for (const side of [-1, 1]) {
+      const strut = new THREE.Mesh(
+        new THREE.BoxGeometry(0.018, 0.52, 0.065),
+        chromeMat
+      );
+      strut.position.set(side * 0.22, rearWingY - 0.25, rearWingZ + 0.02);
+      strut.rotation.x = -0.08;
+
+      const endplate = new THREE.Mesh(
+        new THREE.BoxGeometry(0.018, 0.22, 0.38),
+        bodyPaintMat
+      );
+      endplate.position.set(side * (rearWingSpan * 0.5), rearWingY + 0.01, rearWingZ - 0.02);
+      rearValenceGroup.add(strut, endplate);
+    }
+
+    // Multi-Element Front Aero Wing + Endplates mounted on the Shark Nosecone ahead of Front Wheels
+    const frontWingSpan = 1.42;
+    const frontWingZ = halfLen - 0.16;
+    const frontWingY = 0.205;
+    const frontWingMain = new THREE.Mesh(
+      new THREE.BoxGeometry(frontWingSpan, 0.022, 0.24),
+      bodyPaintMat
+    );
+    frontWingMain.position.set(0, frontWingY, frontWingZ);
+    frontWingMain.rotation.x = 0.12;
+
+    const frontWingFlap = new THREE.Mesh(
+      new THREE.BoxGeometry(frontWingSpan - 0.04, 0.014, 0.10),
+      brushedAlumMat
+    );
+    frontWingFlap.position.set(0, frontWingY + 0.026, frontWingZ - 0.08);
+    frontWingFlap.rotation.x = 0.24;
+    frontNosePivot.add(frontWingMain, frontWingFlap);
+
+    for (const side of [-1, 1]) {
+      const fEndplate = new THREE.Mesh(
+        new THREE.BoxGeometry(0.016, 0.14, 0.30),
+        bodyPaintMat
+      );
+      fEndplate.position.set(side * (frontWingSpan * 0.5), frontWingY + 0.02, frontWingZ - 0.02);
+      frontNosePivot.add(fEndplate);
+    }
+  } else if (isItalian) {
     const nZ = halfLen * 0.72;
     for (const nx of [-0.21, 0, 0.21]) {
       const nSurf = evalSurfaceWithSlope(nx, nZ);
@@ -2874,7 +3093,7 @@ export function buildClassicCarMesh(
     color: isBritish ? 0x1e3a8a : 0xdc2626,
     roughness: 0.52,
   });
-  for (const sx of [-0.19, 0.19]) {
+  for (const sx of isF1 ? [0] : [-0.19, 0.19]) {
     const seatBack = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.25, 0.055), upholsteryMat);
     seatBack.position.set(sx, interiorFloorY + 0.125, -0.34);
     seatBack.rotation.x = -0.16;
@@ -2922,7 +3141,7 @@ export function buildClassicCarMesh(
   }
 
   const helmetGroup = new THREE.Group();
-  helmetGroup.position.set(0.19, interiorFloorY + 0.25, -0.22);
+  helmetGroup.position.set(isF1 ? 0 : 0.19, interiorFloorY + (isF1 ? 0.28 : 0.25), isF1 ? -0.12 : -0.22);
   const helmetShell = new THREE.Mesh(
     new THREE.SphereGeometry(0.102, 16, 16),
     new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.15 })
@@ -2937,15 +3156,15 @@ export function buildClassicCarMesh(
 
   // Rear Tubular FIA Roll Hoop with Harness Crossbar & Diagonal Rear Stays (strictly behind seats!)
   const rollBar = new THREE.Mesh(
-    new THREE.TorusGeometry(0.185, 0.014, 12, 24, Math.PI),
+    new THREE.TorusGeometry(isF1 ? 0.145 : 0.185, 0.014, 12, 24, Math.PI),
     chromeMat
   );
-  rollBar.position.set(0, interiorFloorY + 0.11, -0.39);
+  rollBar.position.set(0, interiorFloorY + (isF1 ? 0.22 : 0.11), isF1 ? -0.26 : -0.39);
   const rollCrossbar = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.011, 0.011, 0.36, 10).rotateZ(Math.PI / 2),
+    new THREE.CylinderGeometry(0.011, 0.011, isF1 ? 0.28 : 0.36, 10).rotateZ(Math.PI / 2),
     chromeMat
   );
-  rollCrossbar.position.set(0, interiorFloorY + 0.18, -0.39);
+  rollCrossbar.position.set(0, interiorFloorY + (isF1 ? 0.27 : 0.18), isF1 ? -0.26 : -0.39);
   bodyGroup.add(rollBar, rollCrossbar);
 
   // Working Chrome Windshield Wipers (parked horizontally along base cowl when dry)
@@ -2966,7 +3185,9 @@ export function buildClassicCarMesh(
   const wiperArmR = new THREE.Mesh(new THREE.BoxGeometry(0.011, 0.21, 0.008), chromeMat);
   wiperArmR.position.y = 0.105;
   wiperRight.add(wiperArmR);
-  bodyGroup.add(wiperLeft, wiperRight);
+  if (!isF1) {
+    bodyGroup.add(wiperLeft, wiperRight);
+  }
 
   // Chrome Talbot Bullet Wing Mirrors
   const mirrorZ = isBritish ? 0.78 : 0.48;
@@ -2997,308 +3218,340 @@ export function buildClassicCarMesh(
   const grilleW = noseHalfW * 0.88;
   const grilleH = 0.114;
 
-  const grilleRecess = new THREE.Mesh(
-    new THREE.BoxGeometry(grilleW, grilleH, 0.020),
-    darkTrimMat
-  );
-  grilleRecess.position.set(0, grilleY, halfLen + 0.004);
-
-  const grilleSurround = new THREE.Mesh(
-    new THREE.BoxGeometry(grilleW + 0.028, grilleH + 0.024, 0.018),
-    chromeMat
-  );
-  grilleSurround.position.set(0, grilleY, halfLen + 0.002);
-  frontNosePivot.add(grilleRecess, grilleSurround);
-
-  for (const gy of [grilleY - 0.026, grilleY, grilleY + 0.026]) {
-    const hBar = new THREE.Mesh(new THREE.BoxGeometry(grilleW - 0.016, 0.006, 0.014), chromeMat);
-    hBar.position.set(0, gy, halfLen + 0.013);
-    frontNosePivot.add(hBar);
-  }
-  for (let vx = -3; vx <= 3; vx++) {
-    const vBar = new THREE.Mesh(new THREE.BoxGeometry(0.0045, grilleH - 0.012, 0.012), brushedAlumMat);
-    vBar.position.set(vx * (grilleW * 0.125), grilleY, halfLen + 0.012);
-    frontNosePivot.add(vBar);
-  }
-
-  const fogBezelGeo = new THREE.CylinderGeometry(0.042, 0.042, 0.024, 16).rotateX(Math.PI / 2);
-  const fogLensGeo = new THREE.CylinderGeometry(0.035, 0.035, 0.028, 16).rotateX(Math.PI / 2);
-  for (const side of [-1, 1]) {
-    const fogX = side * (grilleW * 0.34);
-    const fBezel = new THREE.Mesh(fogBezelGeo, chromeMat);
-    fBezel.position.set(fogX, grilleY, halfLen + 0.016);
-    const fLens = new THREE.Mesh(fogLensGeo, fogLightMat);
-    fLens.position.set(fogX, grilleY, halfLen + 0.019);
-    frontNosePivot.add(fBezel, fLens);
-  }
-
-  // Tapered front chin spoiler / aero splitter strictly within the lower nose sill width
-  const chinSplitterW = noseHalfW * 1.66;
-  const chinSplitter = new THREE.Mesh(
-    new THREE.BoxGeometry(chinSplitterW, 0.028, 0.08),
-    darkTrimMat
-  );
-  chinSplitter.position.set(0, 0.172, halfLen - 0.005);
-  const chinLipTube = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.014, 0.014, chinSplitterW, 14).rotateZ(Math.PI / 2),
-    darkTrimMat
-  );
-  chinLipTube.position.set(0, 0.172, halfLen + 0.032);
-  frontNosePivot.add(chinSplitter, chinLipTube);
-
-  // Contoured 3D Wrap-Around Chrome Front Bumper Assembly with Chassis Mounting Brackets & Vertical Overriders
-  const frontBumperY = 0.214;
-  if (isBritish || is911) {
-    // Full-width compound-curved wrap-around chrome front bumper blade wrapping outside the nose corners
-    const fbPts = [
-      new THREE.Vector3(-noseHalfW * 0.98, frontBumperY, halfLen - 0.055),
-      new THREE.Vector3(-noseHalfW * 0.92, frontBumperY, halfLen + 0.028),
-      new THREE.Vector3(-noseHalfW * 0.50, frontBumperY, halfLen + 0.044),
-      new THREE.Vector3(0, frontBumperY, halfLen + 0.050),
-      new THREE.Vector3(noseHalfW * 0.50, frontBumperY, halfLen + 0.044),
-      new THREE.Vector3(noseHalfW * 0.92, frontBumperY, halfLen + 0.028),
-      new THREE.Vector3(noseHalfW * 0.98, frontBumperY, halfLen - 0.055),
-    ];
-    const fbCurve = new THREE.CatmullRomCurve3(fbPts);
-    const fbBladeGeo = new THREE.TubeGeometry(fbCurve, 36, 0.024, 16, false);
-    const fbBladeMesh = new THREE.Mesh(fbBladeGeo, chromeMat);
-    const fbRubGeo = new THREE.TubeGeometry(fbCurve, 36, 0.011, 12, false);
-    const fbRubMesh = new THREE.Mesh(fbRubGeo, darkTrimMat);
-    fbRubMesh.position.z = 0.016;
-    frontNosePivot.add(fbBladeMesh, fbRubMesh);
-  } else {
-    // Sculpted split quarter-bumperettes wrapping smoothly around each front nose corner (Italian GT & Proto)
-    for (const side of [-1, 1]) {
-      const qbPts = [
-        new THREE.Vector3(side * (noseHalfW * 0.32), frontBumperY, halfLen + 0.042),
-        new THREE.Vector3(side * (noseHalfW * 0.64), frontBumperY, halfLen + 0.038),
-        new THREE.Vector3(side * (noseHalfW * 0.92), frontBumperY, halfLen + 0.026),
-        new THREE.Vector3(side * (noseHalfW * 0.98), frontBumperY, halfLen - 0.055),
-      ];
-      const qbCurve = new THREE.CatmullRomCurve3(qbPts);
-      const qbGeo = new THREE.TubeGeometry(qbCurve, 24, 0.024, 16, false);
-      const qbMesh = new THREE.Mesh(qbGeo, chromeMat);
-      const qbRubGeo = new THREE.TubeGeometry(qbCurve, 24, 0.011, 12, false);
-      const qbRubMesh = new THREE.Mesh(qbRubGeo, darkTrimMat);
-      qbRubMesh.position.z = 0.015;
-      frontNosePivot.add(qbMesh, qbRubMesh);
-    }
-  }
-
-  // Front Bumper Mounting Irons & Classic Chrome Vertical Overriders with Black Rubber Impact Pads
-  for (const side of [-1, 1]) {
-    const overX = side * (noseHalfW * 0.38);
-    const mountIron = new THREE.Mesh(
-      new THREE.BoxGeometry(0.026, 0.024, 0.048),
-      darkTrimMat
-    );
-    mountIron.position.set(overX, frontBumperY, halfLen + 0.018);
-
-    const overriderBody = new THREE.Mesh(
-      new THREE.BoxGeometry(0.036, 0.082, 0.036),
-      chromeMat
-    );
-    overriderBody.position.set(overX, frontBumperY + 0.008, halfLen + 0.042);
-
-    const overriderPad = new THREE.Mesh(
-      new THREE.BoxGeometry(0.028, 0.068, 0.012),
-      darkTrimMat
-    );
-    overriderPad.position.set(overX, frontBumperY + 0.008, halfLen + 0.058);
-    frontNosePivot.add(mountIron, overriderBody, overriderPad);
-  }
-
-  // Fender-Integrated Headlamps with Chrome Bezels emerging cleanly from the front pontoon fenders
-  const lampXAbs = noseHalfW * 0.68;
-  const lampZ = halfLen + 0.004;
-  const lampSurf = evalSurfaceAt(lampXAbs, halfLen - 0.04);
-  const lampY = Math.min(lampSurf.y - 0.048, is911 ? 0.365 : isProto ? 0.305 : 0.335);
-  const lampRadius = isProto ? 0.068 : 0.076;
-  const lampBucketGeo = new THREE.CylinderGeometry(lampRadius * 1.04, lampRadius * 1.10, 0.09, 20).rotateX(Math.PI / 2);
-  const lampBezelGeo = new THREE.CylinderGeometry(lampRadius, lampRadius * 1.04, 0.032, 20).rotateX(Math.PI / 2);
-  const lampLensGeo = new THREE.CylinderGeometry(lampRadius * 0.86, lampRadius * 0.86, 0.038, 20).rotateX(Math.PI / 2);
-  for (const side of [-1, 1]) {
-    const bucket = new THREE.Mesh(lampBucketGeo, bodyPaintMat);
-    bucket.position.set(side * lampXAbs, lampY, lampZ - 0.028);
-    const bezel = new THREE.Mesh(lampBezelGeo, chromeMat);
-    bezel.position.set(side * lampXAbs, lampY, lampZ + 0.006);
-    const lens = new THREE.Mesh(lampLensGeo, headlightMat);
-    lens.position.set(side * lampXAbs, lampY, lampZ + 0.010);
-    frontNosePivot.add(bucket, bezel, lens);
-
-    // Front Fender Corner Amber Indicator / Marker Lamp with Chrome Bezel
-    const markerX = side * (noseHalfW * 0.83);
-    const markerY = frontBumperY + 0.048;
-    const markerBezel = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.022, 0.024, 0.020, 14).rotateX(Math.PI / 2),
-      chromeMat
-    );
-    markerBezel.position.set(markerX, markerY, halfLen + 0.006);
-    const markerLens = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.017, 0.017, 0.024, 14).rotateX(Math.PI / 2),
-      amberTurnMat
-    );
-    markerLens.position.set(markerX, markerY, halfLen + 0.009);
-    frontNosePivot.add(markerBezel, markerLens);
-  }
-
-  // FIA Scrutineering Painted Steel Front Tow Loop
   const towHookMat = new THREE.MeshStandardMaterial({
     color: 0xef4444,
     roughness: 0.35,
     metalness: 0.45,
   });
-  const frontTowEye = new THREE.Mesh(
-    new THREE.TorusGeometry(0.024, 0.006, 10, 18).rotateX(Math.PI / 2),
-    towHookMat
-  );
-  frontTowEye.position.set(noseHalfW * 0.28, 0.175, halfLen + 0.048);
-  frontNosePivot.add(frontTowEye);
 
-  // 6. Sculpted Rear Kammtail Transom, Contoured Wrap-Around Rear Bumpers with Overriders, Taillights, License Plate & Quad Exhausts
-  const tailSurf = evalSurfaceAt(0, -halfLen + 0.02);
-  const tailHalfW = tailSurf.stationHalfW;
-  const transomW = tailHalfW * 1.54; // Stays strictly inside the rear compound-curved quarter flanks on all 4 models!
-  const transomY = isProto ? 0.395 : 0.415;
-
-  const rearTransomChromeTrim = new THREE.Mesh(
-    new THREE.BoxGeometry(transomW + 0.024, 0.146, 0.016),
-    chromeMat
-  );
-  rearTransomChromeTrim.position.set(0, transomY, -halfLen - 0.006);
-
-  const rearTransomInsert = new THREE.Mesh(
-    new THREE.BoxGeometry(transomW, 0.130, 0.016),
-    darkTrimMat
-  );
-  rearTransomInsert.position.set(0, transomY, -halfLen - 0.009);
-  rearValenceGroup.add(rearTransomChromeTrim, rearTransomInsert);
-
-  // Recessed Underbody Rear Diffuser Valance with Vertical Aero Strakes
-  const rearDiffuserW = tailHalfW * 1.32;
-  const rearDiffuser = new THREE.Mesh(
-    new THREE.BoxGeometry(rearDiffuserW, 0.088, 0.09),
-    darkTrimMat
-  );
-  rearDiffuser.position.set(0, 0.205, -halfLen - 0.008);
-  const diffHousing = new THREE.Mesh(
-    new THREE.BoxGeometry(0.24, 0.11, 0.20),
-    brushedAlumMat
-  );
-  diffHousing.position.set(0, 0.225, -halfLen + 0.12);
-  rearValenceGroup.add(rearDiffuser, diffHousing);
-
-  for (const fx of [-0.32, -0.14, 0.14, 0.32]) {
-    const diffuserFin = new THREE.Mesh(
-      new THREE.BoxGeometry(0.012, 0.075, 0.08),
-      darkTrimMat
-    );
-    diffuserFin.position.set(fx, 0.198, -halfLen - 0.018);
-    rearValenceGroup.add(diffuserFin);
-  }
-
-  // Contoured 3D Wrap-Around Chrome Rear Bumper Assembly with Corner Returns, Mounting Irons & Vertical Overriders
-  const rearBumperY = 0.292;
-  if (isBritish || is911) {
-    // Full-width contoured chrome rear bumper blade wrapping smoothly outside the rear quarter panels
-    const rbPts = [
-      new THREE.Vector3(-tailHalfW * 0.98, rearBumperY, -halfLen + 0.055),
-      new THREE.Vector3(-tailHalfW * 0.92, rearBumperY, -halfLen - 0.030),
-      new THREE.Vector3(-tailHalfW * 0.50, rearBumperY, -halfLen - 0.044),
-      new THREE.Vector3(0, rearBumperY, -halfLen - 0.048),
-      new THREE.Vector3(tailHalfW * 0.50, rearBumperY, -halfLen - 0.044),
-      new THREE.Vector3(tailHalfW * 0.92, rearBumperY, -halfLen - 0.030),
-      new THREE.Vector3(tailHalfW * 0.98, rearBumperY, -halfLen + 0.055),
-    ];
-    const rbCurve = new THREE.CatmullRomCurve3(rbPts);
-    const rbBladeGeo = new THREE.TubeGeometry(rbCurve, 36, 0.024, 16, false);
-    const rbBladeMesh = new THREE.Mesh(rbBladeGeo, chromeMat);
-    const rbRubGeo = new THREE.TubeGeometry(rbCurve, 36, 0.011, 12, false);
-    const rbRubMesh = new THREE.Mesh(rbRubGeo, darkTrimMat);
-    rbRubMesh.position.z = -0.016;
-    rearValenceGroup.add(rbBladeMesh, rbRubMesh);
-  } else {
-    // Sculpted split wrap-around chrome rear quarter-bumperettes (Italian GT & Proto)
-    for (const side of [-1, 1]) {
-      const rqbPts = [
-        new THREE.Vector3(side * 0.24, rearBumperY, -halfLen - 0.042),
-        new THREE.Vector3(side * (tailHalfW * 0.58), rearBumperY, -halfLen - 0.040),
-        new THREE.Vector3(side * (tailHalfW * 0.92), rearBumperY, -halfLen - 0.028),
-        new THREE.Vector3(side * (tailHalfW * 0.98), rearBumperY, -halfLen + 0.055),
-      ];
-      const rqbCurve = new THREE.CatmullRomCurve3(rqbPts);
-      const rqbGeo = new THREE.TubeGeometry(rqbCurve, 24, 0.024, 16, false);
-      const rqbMesh = new THREE.Mesh(rqbGeo, chromeMat);
-      const rqbRubGeo = new THREE.TubeGeometry(rqbCurve, 24, 0.011, 12, false);
-      const rqbRubMesh = new THREE.Mesh(rqbRubGeo, darkTrimMat);
-      rqbRubMesh.position.z = -0.015;
-      rearValenceGroup.add(rqbMesh, rqbRubMesh);
-    }
-  }
-
-  // Rear Bumper Mounting Irons & Vertical Chrome Overriders with Rubber Impact Pads
-  for (const side of [-1, 1]) {
-    const rOverX = side * 0.28;
-    const rMountIron = new THREE.Mesh(
-      new THREE.BoxGeometry(0.026, 0.024, 0.048),
-      darkTrimMat
-    );
-    rMountIron.position.set(rOverX, rearBumperY, -halfLen - 0.018);
-
-    const rOverriderBody = new THREE.Mesh(
-      new THREE.BoxGeometry(0.036, 0.082, 0.036),
+  if (isF1) {
+    // Oval Scuderia Nosecone Radiator Air Intake Mouth with Recessed Mesh
+    const f1MouthBezel = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.115, 0.135, 0.04, 20).rotateX(Math.PI / 2),
       chromeMat
     );
-    rOverriderBody.position.set(rOverX, rearBumperY + 0.008, -halfLen - 0.042);
-
-    const rOverriderPad = new THREE.Mesh(
-      new THREE.BoxGeometry(0.028, 0.068, 0.012),
+    f1MouthBezel.scale.set(1.35, 0.72, 1);
+    f1MouthBezel.position.set(0, 0.235, halfLen + 0.008);
+    const f1MouthCavity = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.102, 0.118, 0.05, 20).rotateX(Math.PI / 2),
       darkTrimMat
     );
-    rOverriderPad.position.set(rOverX, rearBumperY + 0.008, -halfLen - 0.058);
-    rearValenceGroup.add(rMountIron, rOverriderBody, rOverriderPad);
-  }
+    f1MouthCavity.scale.set(1.35, 0.72, 1);
+    f1MouthCavity.position.set(0, 0.235, halfLen + 0.004);
+    frontNosePivot.add(f1MouthBezel, f1MouthCavity);
+  } else {
+    const grilleRecess = new THREE.Mesh(
+      new THREE.BoxGeometry(grilleW, grilleH, 0.020),
+      darkTrimMat
+    );
+    grilleRecess.position.set(0, grilleY, halfLen + 0.004);
 
-  const tailRingGeo = new THREE.CylinderGeometry(0.046, 0.046, 0.024, 18).rotateX(Math.PI / 2);
-  const tailLensGeo = new THREE.CylinderGeometry(0.038, 0.038, 0.030, 18).rotateX(Math.PI / 2);
-  const turnLensGeo = new THREE.CylinderGeometry(0.032, 0.032, 0.030, 16).rotateX(Math.PI / 2);
+    const grilleSurround = new THREE.Mesh(
+      new THREE.BoxGeometry(grilleW + 0.028, grilleH + 0.024, 0.018),
+      chromeMat
+    );
+    grilleSurround.position.set(0, grilleY, halfLen + 0.002);
+    frontNosePivot.add(grilleRecess, grilleSurround);
 
-  for (const side of [-1, 1]) {
-    const outerLampX = transomW * 0.42;
-    for (const innerOffset of [0, 0.112]) {
-      const lx = side * (outerLampX - innerOffset);
-      const tailRing = new THREE.Mesh(tailRingGeo, chromeMat);
-      tailRing.position.set(lx, transomY, -halfLen - 0.016);
-      const tailLens = new THREE.Mesh(tailLensGeo, brakeLightsMat);
-      tailLens.position.set(lx, transomY, -halfLen - 0.020);
-      rearValenceGroup.add(tailRing, tailLens);
+    for (const gy of [grilleY - 0.026, grilleY, grilleY + 0.026]) {
+      const hBar = new THREE.Mesh(new THREE.BoxGeometry(grilleW - 0.016, 0.006, 0.014), chromeMat);
+      hBar.position.set(0, gy, halfLen + 0.013);
+      frontNosePivot.add(hBar);
+    }
+    for (let vx = -3; vx <= 3; vx++) {
+      const vBar = new THREE.Mesh(new THREE.BoxGeometry(0.0045, grilleH - 0.012, 0.012), brushedAlumMat);
+      vBar.position.set(vx * (grilleW * 0.125), grilleY, halfLen + 0.012);
+      frontNosePivot.add(vBar);
     }
 
-    const turnX = side * (outerLampX - 0.210);
-    const turnRing = new THREE.Mesh(tailRingGeo, chromeMat);
-    turnRing.scale.set(0.84, 0.84, 1);
-    turnRing.position.set(turnX, transomY, -halfLen - 0.016);
-    const turnLens = new THREE.Mesh(turnLensGeo, amberTurnMat);
-    turnLens.position.set(turnX, transomY, -halfLen - 0.020);
-    rearValenceGroup.add(turnRing, turnLens);
+    const fogBezelGeo = new THREE.CylinderGeometry(0.042, 0.042, 0.024, 16).rotateX(Math.PI / 2);
+    const fogLensGeo = new THREE.CylinderGeometry(0.035, 0.035, 0.028, 16).rotateX(Math.PI / 2);
+    for (const side of [-1, 1]) {
+      const fogX = side * (grilleW * 0.34);
+      const fBezel = new THREE.Mesh(fogBezelGeo, chromeMat);
+      fBezel.position.set(fogX, grilleY, halfLen + 0.016);
+      const fLens = new THREE.Mesh(fogLensGeo, fogLightMat);
+      fLens.position.set(fogX, grilleY, halfLen + 0.019);
+      frontNosePivot.add(fBezel, fLens);
+    }
+
+    // Tapered front chin spoiler / aero splitter strictly within the lower nose sill width
+    const chinSplitterW = noseHalfW * 1.66;
+    const chinSplitter = new THREE.Mesh(
+      new THREE.BoxGeometry(chinSplitterW, 0.028, 0.08),
+      darkTrimMat
+    );
+    chinSplitter.position.set(0, 0.172, halfLen - 0.005);
+    const chinLipTube = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.014, 0.014, chinSplitterW, 14).rotateZ(Math.PI / 2),
+      darkTrimMat
+    );
+    chinLipTube.position.set(0, 0.172, halfLen + 0.032);
+    frontNosePivot.add(chinSplitter, chinLipTube);
+
+    // Contoured 3D Wrap-Around Chrome Front Bumper Assembly with Chassis Mounting Brackets & Vertical Overriders
+    const frontBumperY = 0.214;
+    if (isBritish || is911) {
+      const fbPts = [
+        new THREE.Vector3(-noseHalfW * 0.98, frontBumperY, halfLen - 0.055),
+        new THREE.Vector3(-noseHalfW * 0.92, frontBumperY, halfLen + 0.028),
+        new THREE.Vector3(-noseHalfW * 0.50, frontBumperY, halfLen + 0.044),
+        new THREE.Vector3(0, frontBumperY, halfLen + 0.050),
+        new THREE.Vector3(noseHalfW * 0.50, frontBumperY, halfLen + 0.044),
+        new THREE.Vector3(noseHalfW * 0.92, frontBumperY, halfLen + 0.028),
+        new THREE.Vector3(noseHalfW * 0.98, frontBumperY, halfLen - 0.055),
+      ];
+      const fbCurve = new THREE.CatmullRomCurve3(fbPts);
+      const fbBladeGeo = new THREE.TubeGeometry(fbCurve, 36, 0.024, 16, false);
+      const fbBladeMesh = new THREE.Mesh(fbBladeGeo, chromeMat);
+      const fbRubGeo = new THREE.TubeGeometry(fbCurve, 36, 0.011, 12, false);
+      const fbRubMesh = new THREE.Mesh(fbRubGeo, darkTrimMat);
+      fbRubMesh.position.z = 0.016;
+      frontNosePivot.add(fbBladeMesh, fbRubMesh);
+    } else {
+      for (const side of [-1, 1]) {
+        const qbPts = [
+          new THREE.Vector3(side * (noseHalfW * 0.32), frontBumperY, halfLen + 0.042),
+          new THREE.Vector3(side * (noseHalfW * 0.64), frontBumperY, halfLen + 0.038),
+          new THREE.Vector3(side * (noseHalfW * 0.92), frontBumperY, halfLen + 0.026),
+          new THREE.Vector3(side * (noseHalfW * 0.98), frontBumperY, halfLen - 0.055),
+        ];
+        const qbCurve = new THREE.CatmullRomCurve3(qbPts);
+        const qbGeo = new THREE.TubeGeometry(qbCurve, 24, 0.024, 16, false);
+        const qbMesh = new THREE.Mesh(qbGeo, chromeMat);
+        const qbRubGeo = new THREE.TubeGeometry(qbCurve, 24, 0.011, 12, false);
+        const qbRubMesh = new THREE.Mesh(qbRubGeo, darkTrimMat);
+        qbRubMesh.position.z = 0.015;
+        frontNosePivot.add(qbMesh, qbRubMesh);
+      }
+    }
+
+    for (const side of [-1, 1]) {
+      const overX = side * (noseHalfW * 0.38);
+      const mountIron = new THREE.Mesh(
+        new THREE.BoxGeometry(0.026, 0.024, 0.048),
+        darkTrimMat
+      );
+      mountIron.position.set(overX, frontBumperY, halfLen + 0.018);
+
+      const overriderBody = new THREE.Mesh(
+        new THREE.BoxGeometry(0.036, 0.082, 0.036),
+        chromeMat
+      );
+      overriderBody.position.set(overX, frontBumperY + 0.008, halfLen + 0.042);
+
+      const overriderPad = new THREE.Mesh(
+        new THREE.BoxGeometry(0.028, 0.068, 0.012),
+        darkTrimMat
+      );
+      overriderPad.position.set(overX, frontBumperY + 0.008, halfLen + 0.058);
+      frontNosePivot.add(mountIron, overriderBody, overriderPad);
+    }
+
+    // Fender-Integrated Headlamps with Chrome Bezels emerging cleanly from the front pontoon fenders
+    const lampXAbs = noseHalfW * 0.68;
+    const lampZ = halfLen + 0.004;
+    const lampSurf = evalSurfaceAt(lampXAbs, halfLen - 0.04);
+    const lampY = Math.min(lampSurf.y - 0.048, is911 ? 0.365 : isProto ? 0.305 : 0.335);
+    const lampRadius = isProto ? 0.068 : 0.076;
+    const lampBucketGeo = new THREE.CylinderGeometry(lampRadius * 1.04, lampRadius * 1.10, 0.09, 20).rotateX(Math.PI / 2);
+    const lampBezelGeo = new THREE.CylinderGeometry(lampRadius, lampRadius * 1.04, 0.032, 20).rotateX(Math.PI / 2);
+    const lampLensGeo = new THREE.CylinderGeometry(lampRadius * 0.86, lampRadius * 0.86, 0.038, 20).rotateX(Math.PI / 2);
+    for (const side of [-1, 1]) {
+      const bucket = new THREE.Mesh(lampBucketGeo, bodyPaintMat);
+      bucket.position.set(side * lampXAbs, lampY, lampZ - 0.028);
+      const bezel = new THREE.Mesh(lampBezelGeo, chromeMat);
+      bezel.position.set(side * lampXAbs, lampY, lampZ + 0.006);
+      const lens = new THREE.Mesh(lampLensGeo, headlightMat);
+      lens.position.set(side * lampXAbs, lampY, lampZ + 0.010);
+      frontNosePivot.add(bucket, bezel, lens);
+
+      const markerX = side * (noseHalfW * 0.83);
+      const markerY = frontBumperY + 0.048;
+      const markerBezel = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.022, 0.024, 0.020, 14).rotateX(Math.PI / 2),
+        chromeMat
+      );
+      markerBezel.position.set(markerX, markerY, halfLen + 0.006);
+      const markerLens = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.017, 0.017, 0.024, 14).rotateX(Math.PI / 2),
+        amberTurnMat
+      );
+      markerLens.position.set(markerX, markerY, halfLen + 0.009);
+      frontNosePivot.add(markerBezel, markerLens);
+    }
+
+    const frontTowEye = new THREE.Mesh(
+      new THREE.TorusGeometry(0.024, 0.006, 10, 18).rotateX(Math.PI / 2),
+      towHookMat
+    );
+    frontTowEye.position.set(noseHalfW * 0.28, 0.175, halfLen + 0.048);
+    frontNosePivot.add(frontTowEye);
   }
 
-  const plateFrame = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.112, 0.014), chromeMat);
-  plateFrame.position.set(0, transomY, -halfLen - 0.016);
-  const plateFace = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.296, 0.096),
-    new THREE.MeshBasicMaterial({ map: getVintageLicensePlateTexture() })
-  );
-  plateFace.position.set(0, transomY, -halfLen - 0.024);
-  plateFace.rotation.y = Math.PI;
-  rearValenceGroup.add(plateFrame, plateFace);
+  // 6. Sculpted Rear Kammtail Transom / F1 Gearbox Tail, Taillights & Exhausts
+  const tailSurf = evalSurfaceAt(0, -halfLen + 0.02);
+  const tailHalfW = tailSurf.stationHalfW;
+  const transomW = tailHalfW * 1.54;
+  const transomY = isF1 ? 0.32 : isProto ? 0.395 : 0.415;
 
+  if (isF1) {
+    // Finned Magnesium Hewland F1 Transaxle Gearbox Casing & Central FIA Red Rain Light
+    const gearboxCasing = new THREE.Mesh(
+      new THREE.BoxGeometry(0.28, 0.22, 0.48),
+      brushedAlumMat
+    );
+    gearboxCasing.position.set(0, 0.30, -halfLen + 0.12);
+    const rainLampBezel = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.042, 0.045, 0.03, 16).rotateX(Math.PI / 2),
+      chromeMat
+    );
+    rainLampBezel.position.set(0, 0.32, -halfLen - 0.12);
+    const rainLampLens = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.036, 0.036, 0.036, 16).rotateX(Math.PI / 2),
+      brakeLightsMat
+    );
+    rainLampLens.position.set(0, 0.32, -halfLen - 0.126);
+    rearValenceGroup.add(gearboxCasing, rainLampBezel, rainLampLens);
+  } else {
+    const rearTransomChromeTrim = new THREE.Mesh(
+      new THREE.BoxGeometry(transomW + 0.024, 0.146, 0.016),
+      chromeMat
+    );
+    rearTransomChromeTrim.position.set(0, transomY, -halfLen - 0.006);
+
+    const rearTransomInsert = new THREE.Mesh(
+      new THREE.BoxGeometry(transomW, 0.130, 0.016),
+      darkTrimMat
+    );
+    rearTransomInsert.position.set(0, transomY, -halfLen - 0.009);
+    rearValenceGroup.add(rearTransomChromeTrim, rearTransomInsert);
+
+    // Recessed Underbody Rear Diffuser Valance with Vertical Aero Strakes
+    const rearDiffuserW = tailHalfW * 1.32;
+    const rearDiffuser = new THREE.Mesh(
+      new THREE.BoxGeometry(rearDiffuserW, 0.088, 0.09),
+      darkTrimMat
+    );
+    rearDiffuser.position.set(0, 0.205, -halfLen - 0.008);
+    const diffHousing = new THREE.Mesh(
+      new THREE.BoxGeometry(0.24, 0.11, 0.20),
+      brushedAlumMat
+    );
+    diffHousing.position.set(0, 0.225, -halfLen + 0.12);
+    rearValenceGroup.add(rearDiffuser, diffHousing);
+
+    for (const fx of [-0.32, -0.14, 0.14, 0.32]) {
+      const diffuserFin = new THREE.Mesh(
+        new THREE.BoxGeometry(0.012, 0.075, 0.08),
+        darkTrimMat
+      );
+      diffuserFin.position.set(fx, 0.198, -halfLen - 0.018);
+      rearValenceGroup.add(diffuserFin);
+    }
+
+    const rearBumperY = 0.292;
+    if (isBritish || is911) {
+      const rbPts = [
+        new THREE.Vector3(-tailHalfW * 0.98, rearBumperY, -halfLen + 0.055),
+        new THREE.Vector3(-tailHalfW * 0.92, rearBumperY, -halfLen - 0.030),
+        new THREE.Vector3(-tailHalfW * 0.50, rearBumperY, -halfLen - 0.044),
+        new THREE.Vector3(0, rearBumperY, -halfLen - 0.048),
+        new THREE.Vector3(tailHalfW * 0.50, rearBumperY, -halfLen - 0.044),
+        new THREE.Vector3(tailHalfW * 0.92, rearBumperY, -halfLen - 0.030),
+        new THREE.Vector3(tailHalfW * 0.98, rearBumperY, -halfLen + 0.055),
+      ];
+      const rbCurve = new THREE.CatmullRomCurve3(rbPts);
+      const rbBladeGeo = new THREE.TubeGeometry(rbCurve, 36, 0.024, 16, false);
+      const rbBladeMesh = new THREE.Mesh(rbBladeGeo, chromeMat);
+      const rbRubGeo = new THREE.TubeGeometry(rbCurve, 36, 0.011, 12, false);
+      const rbRubMesh = new THREE.Mesh(rbRubGeo, darkTrimMat);
+      rbRubMesh.position.z = -0.016;
+      rearValenceGroup.add(rbBladeMesh, rbRubMesh);
+    } else {
+      for (const side of [-1, 1]) {
+        const rqbPts = [
+          new THREE.Vector3(side * 0.24, rearBumperY, -halfLen - 0.042),
+          new THREE.Vector3(side * (tailHalfW * 0.58), rearBumperY, -halfLen - 0.040),
+          new THREE.Vector3(side * (tailHalfW * 0.92), rearBumperY, -halfLen - 0.028),
+          new THREE.Vector3(side * (tailHalfW * 0.98), rearBumperY, -halfLen + 0.055),
+        ];
+        const rqbCurve = new THREE.CatmullRomCurve3(rqbPts);
+        const rqbGeo = new THREE.TubeGeometry(rqbCurve, 24, 0.024, 16, false);
+        const rqbMesh = new THREE.Mesh(rqbGeo, chromeMat);
+        const rqbRubGeo = new THREE.TubeGeometry(rqbCurve, 24, 0.011, 12, false);
+        const rqbRubMesh = new THREE.Mesh(rqbRubGeo, darkTrimMat);
+        rqbRubMesh.position.z = -0.015;
+        rearValenceGroup.add(rqbMesh, rqbRubMesh);
+      }
+    }
+
+    for (const side of [-1, 1]) {
+      const rOverX = side * 0.28;
+      const rMountIron = new THREE.Mesh(
+        new THREE.BoxGeometry(0.026, 0.024, 0.048),
+        darkTrimMat
+      );
+      rMountIron.position.set(rOverX, rearBumperY, -halfLen - 0.018);
+
+      const rOverriderBody = new THREE.Mesh(
+        new THREE.BoxGeometry(0.036, 0.082, 0.036),
+        chromeMat
+      );
+      rOverriderBody.position.set(rOverX, rearBumperY + 0.008, -halfLen - 0.042);
+
+      const rOverriderPad = new THREE.Mesh(
+        new THREE.BoxGeometry(0.028, 0.068, 0.012),
+        darkTrimMat
+      );
+      rOverriderPad.position.set(rOverX, rearBumperY + 0.008, -halfLen - 0.058);
+      rearValenceGroup.add(rMountIron, rOverriderBody, rOverriderPad);
+    }
+
+    const tailRingGeo = new THREE.CylinderGeometry(0.046, 0.046, 0.024, 18).rotateX(Math.PI / 2);
+    const tailLensGeo = new THREE.CylinderGeometry(0.038, 0.038, 0.030, 18).rotateX(Math.PI / 2);
+    const turnLensGeo = new THREE.CylinderGeometry(0.032, 0.032, 0.030, 16).rotateX(Math.PI / 2);
+
+    for (const side of [-1, 1]) {
+      const outerLampX = transomW * 0.42;
+      for (const innerOffset of [0, 0.112]) {
+        const lx = side * (outerLampX - innerOffset);
+        const tailRing = new THREE.Mesh(tailRingGeo, chromeMat);
+        tailRing.position.set(lx, transomY, -halfLen - 0.016);
+        const tailLens = new THREE.Mesh(tailLensGeo, brakeLightsMat);
+        tailLens.position.set(lx, transomY, -halfLen - 0.020);
+        rearValenceGroup.add(tailRing, tailLens);
+      }
+
+      const turnX = side * (outerLampX - 0.210);
+      const turnRing = new THREE.Mesh(tailRingGeo, chromeMat);
+      turnRing.scale.set(0.84, 0.84, 1);
+      turnRing.position.set(turnX, transomY, -halfLen - 0.016);
+      const turnLens = new THREE.Mesh(turnLensGeo, amberTurnMat);
+      turnLens.position.set(turnX, transomY, -halfLen - 0.020);
+      rearValenceGroup.add(turnRing, turnLens);
+    }
+
+    const plateFrame = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.112, 0.014), chromeMat);
+    plateFrame.position.set(0, transomY, -halfLen - 0.016);
+    const plateFace = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.296, 0.096),
+      new THREE.MeshBasicMaterial({ map: getVintageLicensePlateTexture() })
+    );
+    plateFace.position.set(0, transomY, -halfLen - 0.024);
+    plateFace.rotation.y = Math.PI;
+    rearValenceGroup.add(plateFrame, plateFace);
+  }
+
+  const exhaustY = isF1 ? 0.49 : 0.19;
   const exhaustFlamesGroup = new THREE.Group();
-  exhaustFlamesGroup.position.set(0, 0.19, -halfLen - 0.21);
+  exhaustFlamesGroup.position.set(0, exhaustY, -halfLen - 0.21);
   exhaustFlamesGroup.visible = false;
   rearValenceGroup.add(exhaustFlamesGroup);
 
-  const exhaustOffsets = isBritish
+  const exhaustOffsets = isF1
+    ? [-0.12, 0.12]
+    : isBritish
     ? [-0.09, 0.09]
     : [-0.37, -0.25, 0.25, 0.37];
 
@@ -3322,26 +3575,30 @@ export function buildClassicCarMesh(
     opacity: 0.95,
   });
 
-  const silencerGeo = new THREE.CylinderGeometry(0.056, 0.056, 0.28, 16).rotateX(Math.PI / 2);
-  for (const sx of isBritish ? [0] : [-0.31, 0.31]) {
-    const silencer = new THREE.Mesh(silencerGeo, brushedAlumMat);
-    silencer.position.set(sx, 0.195, -halfLen + 0.18);
-    rearValenceGroup.add(silencer);
+  if (!isF1) {
+    const silencerGeo = new THREE.CylinderGeometry(0.056, 0.056, 0.28, 16).rotateX(Math.PI / 2);
+    for (const sx of isBritish ? [0] : [-0.31, 0.31]) {
+      const silencer = new THREE.Mesh(silencerGeo, brushedAlumMat);
+      silencer.position.set(sx, 0.195, -halfLen + 0.18);
+      rearValenceGroup.add(silencer);
+    }
+
+    const rearTowEye = new THREE.Mesh(
+      new THREE.TorusGeometry(0.024, 0.006, 10, 18).rotateX(Math.PI / 2),
+      towHookMat
+    );
+    rearTowEye.position.set(-0.20, 0.20, -halfLen - 0.042);
+    rearValenceGroup.add(rearTowEye);
   }
 
-  const rearTowEye = new THREE.Mesh(
-    new THREE.TorusGeometry(0.024, 0.006, 10, 18).rotateX(Math.PI / 2),
-    towHookMat
-  );
-  rearTowEye.position.set(-0.20, 0.20, -halfLen - 0.042);
-  rearValenceGroup.add(rearTowEye);
-
   for (const px of exhaustOffsets) {
-    const pipeOuter = new THREE.Mesh(outerPipeGeo, chromeMat);
-    pipeOuter.position.set(px, 0.19, -halfLen - 0.04);
-    const pipeBore = new THREE.Mesh(innerBoreGeo, darkTrimMat);
-    pipeBore.position.set(px, 0.19, -halfLen - 0.045);
-    rearValenceGroup.add(pipeOuter, pipeBore);
+    if (!isF1) {
+      const pipeOuter = new THREE.Mesh(outerPipeGeo, chromeMat);
+      pipeOuter.position.set(px, exhaustY, -halfLen - 0.04);
+      const pipeBore = new THREE.Mesh(innerBoreGeo, darkTrimMat);
+      pipeBore.position.set(px, exhaustY, -halfLen - 0.045);
+      rearValenceGroup.add(pipeOuter, pipeBore);
+    }
 
     const flameOuter = new THREE.Mesh(flameOuterGeo, flameOuterMat);
     flameOuter.position.set(px, 0, 0);

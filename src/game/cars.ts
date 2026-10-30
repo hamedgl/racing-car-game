@@ -113,6 +113,34 @@ export const CLASSIC_CARS: ClassicCarSpec[] = [
       wheelFinish: 'gunmetal_alloy',
     },
   },
+  {
+    id: 'scuderia_f1_68',
+    name: '1968 Scuderia 312 F1',
+    year: 1968,
+    origin: 'Maranello, Italy',
+    engineConfig: 'V12',
+    displacement: '3.0L 48-Valve F1 V12',
+    description: 'Featherweight open-wheel Grand Prix monoposto with high-mounted aero wings, exposed double-wishbone suspension, and a screaming 10,800 RPM V12.',
+    unlockCost: 0,
+    baseStats: {
+      powerHp: 435,
+      weightKg: 540,
+      topSpeedKmh: 342,
+      accel0to100: 3.1,
+      lateralGripG: 1.62,
+      brakingG: 1.68,
+      dragCoeff: 0.29,
+      wheelbaseM: 2.40,
+    },
+    bodyStyle: 'f1_monoposto',
+    defaultLivery: {
+      bodyColor: '#c81d25',
+      stripeStyle: 'twin_center',
+      stripeColor: '#f8fafc',
+      number: 5,
+      wheelFinish: 'gold_magnesium',
+    },
+  },
 ];
 
 export const PAINT_SWATCHES = [

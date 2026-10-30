@@ -298,6 +298,28 @@ export function getMarqueCrestPng(carId: string): string {
     ctx.font = 'bold 13px monospace';
     ctx.textAlign = 'center';
     ctx.fillText('911 RS', cx, cy + 1);
+  } else if (carId === 'scuderia_f1_68') {
+    // Scuderia Maranello F1 Grand Prix Crest: Giallo Modena shield, Italian tricolore & F1 312 badge
+    ctx.fillStyle = '#DC2626';
+    ctx.fillRect(0, 0, 160, 160);
+    ctx.fillStyle = '#FACC15';
+    ctx.fillRect(cx - 48, cy - 38, 96, 66);
+    ctx.fillStyle = '#15803D';
+    ctx.fillRect(cx - 55, cy - 58, 36, 12);
+    ctx.fillStyle = '#F8FAFC';
+    ctx.fillRect(cx - 19, cy - 58, 38, 12);
+    ctx.fillStyle = '#DC2626';
+    ctx.fillRect(cx + 19, cy - 58, 36, 12);
+
+    ctx.fillStyle = '#090D14';
+    ctx.font = 'bold 17px Georgia, serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('312 F1', cx, cy - 4);
+    ctx.font = 'bold 10px monospace';
+    ctx.fillText('48V · V12', cx, cy + 16);
+    ctx.fillStyle = '#FEF3C7';
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText('SCUDERIA', cx, cy + 44);
   } else {
     // Dearborn Blue, White & Crimson Le Mans Prototype Crest
     ctx.fillStyle = '#1E3A8A';
@@ -406,11 +428,23 @@ export function getCarBlueprintPng(
   const is911 = carId === 'stuttgart_911s_rs';
   const isProto = carId === 'dearborn_gt40_mk2';
   const isBritish = carId === 'coventry_etype_lw';
+  const isF1 = carId === 'scuderia_f1_68';
 
   // Draw sculpted side-elevation silhouette per classic chassis
   ctx.save();
   ctx.beginPath();
-  if (isProto) {
+  if (isF1) {
+    // Low-slung 1968 Formula 1 cigar/wedge monoposto fuselage with open cockpit
+    ctx.moveTo(118, 142); // Rear gearbox lower edge
+    ctx.lineTo(112, 116); // Rear engine bay deck
+    ctx.lineTo(222, 112); // Behind cockpit bulkhead
+    ctx.lineTo(234, 98);  // Cockpit headrest cowl
+    ctx.lineTo(260, 108); // Open cockpit rim dip
+    ctx.lineTo(318, 106); // Forward cockpit cowl
+    ctx.bezierCurveTo(378, 108, 438, 118, 488, 134); // Tapered F1 shark nosecone
+    ctx.lineTo(488, 144); // Lower nosecone tip
+    ctx.lineTo(118, 144);
+  } else if (isProto) {
     // Low-slung 40.5-inch Le Mans Prototype wedge & Kamm tail
     ctx.moveTo(86, 146); // rear lower valence
     ctx.lineTo(78, 114); // Kamm tail vertical transom
@@ -467,7 +501,7 @@ export function getCarBlueprintPng(
     ctx.save();
     ctx.clip();
     ctx.fillStyle = stripeColor;
-    ctx.fillRect(70, 132, 420, 7);
+    ctx.fillRect(70, isF1 ? 124 : 132, 420, 7);
     if (stripeStyle === 'hood_sill') {
       ctx.fillRect(345, 96, 130, 12);
     }
@@ -479,31 +513,98 @@ export function getCarBlueprintPng(
   ctx.stroke();
   ctx.restore();
 
-  // Greenhouse side windows with chrome framing
-  ctx.save();
-  ctx.fillStyle = '#0F172A';
-  ctx.strokeStyle = '#E2E8F0';
-  ctx.lineWidth = 1.8;
-  ctx.beginPath();
-  if (isProto) {
-    ctx.moveTo(232, 88);
-    ctx.quadraticCurveTo(285, 76, 346, 98);
-    ctx.lineTo(240, 100);
-  } else if (is911) {
-    ctx.moveTo(186, 98);
-    ctx.quadraticCurveTo(245, 72, 336, 98);
-    ctx.lineTo(350, 104);
-    ctx.lineTo(186, 104);
+  if (isF1) {
+    // F1 High-Mounted Rear Wing + Struts, Front Aero Wing, Roll Hoop, Driver Helmet & V12 Velocity Trumpets
+    // Rear wing struts
+    ctx.strokeStyle = '#E2E8F0';
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.moveTo(142, 114);
+    ctx.lineTo(130, 66);
+    ctx.moveTo(156, 114);
+    ctx.lineTo(144, 66);
+    ctx.stroke();
+
+    // Rear bi-plane wing & endplate
+    ctx.fillStyle = bodyColor;
+    ctx.fillRect(114, 56, 42, 16);
+    ctx.strokeStyle = stripeColor;
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(114, 56, 42, 16);
+
+    // Front wing & endplate ahead of front wheel
+    ctx.fillStyle = bodyColor;
+    ctx.fillRect(466, 132, 34, 14);
+    ctx.strokeRect(466, 132, 34, 14);
+
+    // Chrome roll hoop & driver helmet in open cockpit
+    ctx.strokeStyle = '#E2E8F0';
+    ctx.lineWidth = 2.8;
+    ctx.beginPath();
+    ctx.moveTo(228, 100);
+    ctx.lineTo(234, 74);
+    ctx.lineTo(248, 102);
+    ctx.stroke();
+
+    ctx.fillStyle = '#F8FAFC';
+    ctx.beginPath();
+    ctx.arc(266, 95, 10, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#0F172A';
+    ctx.fillRect(268, 91, 8, 5);
+
+    // Tinted wrap-around Perspex aero windscreen
+    ctx.fillStyle = 'rgba(56, 189, 248, 0.38)';
+    ctx.strokeStyle = '#E2E8F0';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(286, 106);
+    ctx.lineTo(304, 92);
+    ctx.lineTo(326, 106);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Exposed V12 intake velocity trumpets & white bundle-of-snakes exhaust
+    ctx.fillStyle = '#CBD5E1';
+    for (let t = 0; t < 6; t++) {
+      ctx.fillRect(162 + t * 9, 98, 5, 14);
+    }
+    ctx.strokeStyle = '#F8FAFC';
+    ctx.lineWidth = 3.2;
+    ctx.beginPath();
+    ctx.moveTo(165, 118);
+    ctx.lineTo(92, 116);
+    ctx.moveTo(175, 123);
+    ctx.lineTo(90, 122);
+    ctx.stroke();
   } else {
-    ctx.moveTo(196, 96);
-    ctx.quadraticCurveTo(255, 74, 310, 78);
-    ctx.lineTo(340, 102);
-    ctx.lineTo(196, 102);
+    // Greenhouse side windows with chrome framing
+    ctx.save();
+    ctx.fillStyle = '#0F172A';
+    ctx.strokeStyle = '#E2E8F0';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    if (isProto) {
+      ctx.moveTo(232, 88);
+      ctx.quadraticCurveTo(285, 76, 346, 98);
+      ctx.lineTo(240, 100);
+    } else if (is911) {
+      ctx.moveTo(186, 98);
+      ctx.quadraticCurveTo(245, 72, 336, 98);
+      ctx.lineTo(350, 104);
+      ctx.lineTo(186, 104);
+    } else {
+      ctx.moveTo(196, 96);
+      ctx.quadraticCurveTo(255, 74, 310, 78);
+      ctx.lineTo(340, 102);
+      ctx.lineTo(196, 102);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
   }
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-  ctx.restore();
 
   // Triple shark-gill fender louvers on front flank
   ctx.fillStyle = '#090D14';
@@ -516,7 +617,7 @@ export function getCarBlueprintPng(
   }
 
   // White FIA door roundel & racing number
-  const roundelX = 278;
+  const roundelX = isF1 ? 348 : 278;
   const roundelY = 124;
   ctx.fillStyle = '#F8FAFC';
   ctx.beginPath();
@@ -531,13 +632,15 @@ export function getCarBlueprintPng(
   ctx.textBaseline = 'middle';
   ctx.fillText(String(number), roundelX, roundelY + 1);
 
-  // Front and rear chrome bumper blades + quad exhaust pipes
-  ctx.fillStyle = '#E2E8F0';
-  ctx.fillRect(468, 134, 18, 5);
-  ctx.fillRect(72, 132, 18, 5);
-  ctx.fillStyle = '#94A3B8';
-  ctx.fillRect(68, 141, 14, 3.5);
-  ctx.fillRect(68, 146, 14, 3.5);
+  if (!isF1) {
+    // Front and rear chrome bumper blades + quad exhaust pipes
+    ctx.fillStyle = '#E2E8F0';
+    ctx.fillRect(468, 134, 18, 5);
+    ctx.fillRect(72, 132, 18, 5);
+    ctx.fillStyle = '#94A3B8';
+    ctx.fillRect(68, 141, 14, 3.5);
+    ctx.fillRect(68, 146, 14, 3.5);
+  }
 
   // Front & Rear Wheels with Borrani wire / Gold Magnesium / Gunmetal Alloy detail
   const wheelPositions = [152, 404];
@@ -611,7 +714,13 @@ export function getCarBlueprintPng(
   ctx.fillStyle = 'rgba(245, 158, 11, 0.9)';
   ctx.font = 'bold 10px monospace';
   ctx.textAlign = 'left';
-  ctx.fillText('FIA GROUP 4 HOMOLOGATION · ORTHOGRAPHIC ELEVATION 1:18', 20, 24);
+  ctx.fillText(
+    isF1
+      ? 'FIA FORMULA 1 MONOPOSTO · ORTHOGRAPHIC ELEVATION 1:18'
+      : 'FIA GROUP 4 HOMOLOGATION · ORTHOGRAPHIC ELEVATION 1:18',
+    20,
+    24
+  );
   ctx.fillStyle = 'rgba(203, 213, 225, 0.75)';
   ctx.fillText('WHEELBASE: 2,400 MM', 152, 188);
   ctx.textAlign = 'right';

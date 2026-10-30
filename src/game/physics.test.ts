@@ -1,7 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CLASSIC_CARS, DEFAULT_TUNING, DEFAULT_UPGRADES } from './cars';
-import { CHAMPIONSHIP_LEVELS, TRACK_LIST, TRACKS, findClosestTrackSample } from './tracks';
+import {
+  CHAMPIONSHIP_LEVELS,
+  TRACK_LIST,
+  TRACKS,
+  findClosestTrackSample,
+  findNonLocalTrackProximity,
+  isWorldPointClearOfTrack,
+} from './tracks';
 import {
   computeEffectiveCarStats,
   createInitialVehicleState,
@@ -21,6 +28,9 @@ import {
   refitFreshTires,
   evaluateTireGripMultiplier,
   evaluatePitStopAnimation,
+  evaluateDriftCameraKinematics,
+  computeRacingLineProfile,
+  evaluateRacingLineSegmentVisual,
   PIT_STOP_DURATION_SEC,
   computeRedlineTremor,
   createTrackBreakableProps,
@@ -690,4 +700,250 @@ test('evaluateCockpitLightingState computes dynamic canopy flicker, tunnel sodiu
     `Tunnel darkness must automatically illuminate warm cockpit instrument backlights (got ${tunnelUnderLamp.instrumentBacklight})`
   );
 });
+
+test('evaluateDriftCameraKinematics dynamically pans and tilts based on slip angle and velocity', () => {
+  // 1. Straight-line cruising (zero slip, zero angular velocity)
+  const straightCam = evaluateDriftCameraKinematics(
+    {
+      slipAngleRad: 0,
+      speedMs: 35,
+      angularVelocity: 0,
+      rollRad: 0,
+      pitchRad: 0,
+      isDrifting: false,
+      isBoosting: false,
+    },
+    80
+  );
+  assert.equal(straightCam.panYawRad, 0, 'Straight-line panYawRad must be 0');
+  assert.equal(straightCam.lateralOffsetM, 0, 'Straight-line lateralOffsetM must be 0');
+  assert.equal(straightCam.lookLateralM, 0, 'Straight-line lookLateralM must be 0');
+  assert.equal(straightCam.tiltRollRad, 0, 'Straight-line tiltRollRad must be 0');
+  assert.equal(straightCam.driftIntensity, 0, 'Straight-line driftIntensity must be 0');
+
+  // 2. Moderate slip at moderate speed vs. deep slip at high speed
+  const mildDriftCam = evaluateDriftCameraKinematics(
+    {
+      slipAngleRad: 0.22,
+      speedMs: 24,
+      angularVelocity: -0.35,
+      rollRad: 0.02,
+      pitchRad: 0,
+      isDrifting: true,
+      isBoosting: false,
+    },
+    80
+  );
+  const highSpeedDriftCam = evaluateDriftCameraKinematics(
+    {
+      slipAngleRad: 0.45,
+      speedMs: 54,
+      angularVelocity: -0.65,
+      rollRad: 0.04,
+      pitchRad: 0,
+      isDrifting: true,
+      isBoosting: false,
+    },
+    80
+  );
+
+  assert.ok(
+    highSpeedDriftCam.panYawRad > mildDriftCam.panYawRad,
+    `Higher slip & velocity must increase dynamic pan angle (${highSpeedDriftCam.panYawRad} vs ${mildDriftCam.panYawRad})`
+  );
+  assert.ok(
+    highSpeedDriftCam.lateralOffsetM > mildDriftCam.lateralOffsetM,
+    `Higher slip & velocity must increase camera lateral swing (${highSpeedDriftCam.lateralOffsetM} vs ${mildDriftCam.lateralOffsetM})`
+  );
+  assert.ok(
+    Math.abs(highSpeedDriftCam.tiltRollRad) > Math.abs(mildDriftCam.tiltRollRad),
+    `Higher slip & velocity must increase horizon bank tilt (${highSpeedDriftCam.tiltRollRad} vs ${mildDriftCam.tiltRollRad})`
+  );
+  assert.ok(
+    highSpeedDriftCam.fovDeg > mildDriftCam.fovDeg,
+    `High-speed drift must widen FOV (${highSpeedDriftCam.fovDeg} vs ${mildDriftCam.fovDeg})`
+  );
+
+  // 3. Left vs. Right drift symmetry
+  const rightDriftCam = evaluateDriftCameraKinematics(
+    {
+      slipAngleRad: -0.45,
+      speedMs: 54,
+      angularVelocity: 0.65,
+      rollRad: -0.04,
+      pitchRad: 0,
+      isDrifting: true,
+      isBoosting: false,
+    },
+    80
+  );
+  assert.equal(
+    highSpeedDriftCam.panYawRad,
+    -rightDriftCam.panYawRad,
+    'Left and right drifts must pan symmetrically'
+  );
+  assert.equal(
+    highSpeedDriftCam.lateralOffsetM,
+    -rightDriftCam.lateralOffsetM,
+    'Left and right drifts must offset laterally symmetrically'
+  );
+  assert.equal(
+    highSpeedDriftCam.tiltRollRad,
+    -rightDriftCam.tiltRollRad,
+    'Left and right drifts must tilt symmetrically'
+  );
+});
+
+test('Enhanced drift mechanics initiate smoothly, preserve cornering momentum, recharge nitro, and award drift mastery', () => {
+  const track = TRACKS.monza_storico;
+  const car = CLASSIC_CARS[0];
+  const stats = computeEffectiveCarStats(car, DEFAULT_UPGRADES, DEFAULT_TUNING);
+  const player = createInitialVehicleState({
+    id: 'player-drift',
+    isPlayer: true,
+    driverName: 'Nuvolari',
+    carSpecId: car.id,
+    livery: car.defaultLivery,
+    track,
+    gridSlot: 0,
+  });
+
+  // Start at 42 m/s (~151 km/h) with 40% nitro charge
+  const fx = Math.sin(player.yaw);
+  const fz = Math.cos(player.yaw);
+  player.vx = fx * 42;
+  player.vz = fz * 42;
+  player.speedMs = 42;
+  player.gear = 3;
+  player.rpm = 6200;
+  player.nitroCharge = 40;
+
+  // Step 1: Initiate drift with brief handbrake + turn-in for 0.30s (18 frames), then power-slide under throttle for 0.70s (42 frames)
+  for (let i = 0; i < 60; i++) {
+    const useHandbrake = i < 18;
+    stepVehiclePhysics(
+      player,
+      {
+        forward: true,
+        backward: false,
+        left: true,
+        right: false,
+        handbrake: useHandbrake,
+      },
+      stats,
+      track,
+      1 / 60,
+      i * 16.67,
+      undefined,
+      'off',
+      undefined,
+      1.0,
+      'pro_assisted'
+    );
+  }
+
+  assert.equal(player.isDrifting, true, 'Vehicle should enter active drift state');
+  assert.ok(
+    (player.driftAngleDeg ?? 0) >= 6,
+    `Drift angle in degrees should be populated during slide (got ${player.driftAngleDeg}°)`
+  );
+  assert.ok(
+    player.speedMs > 28,
+    `Drift vector forward thrust should preserve strong cornering speed without bogging down (got ${player.speedMs} m/s)`
+  );
+  assert.ok(
+    player.nitroCharge > 43,
+    `Sustained drifting must recharge nitroCharge (rose from 40 to ${player.nitroCharge})`
+  );
+  assert.ok(
+    (player.driftDurationSec ?? 0) >= 0.65,
+    `Sustained drift duration should accumulate (got ${player.driftDurationSec}s)`
+  );
+  assert.equal(
+    player.lastActionBanner,
+    'APEX POWER SLIDE',
+    'Sustained drift >= 0.65s must award APEX POWER SLIDE mastery action'
+  );
+});
+
+test('isWorldPointClearOfTrack globally rejects on-road and adjacent switchback points across all 5 circuits', () => {
+  for (const track of TRACK_LIST) {
+    // 1. Every road centerline and kerb edge sample must be rejected
+    for (let i = 0; i < track.samples.length; i += 25) {
+      const s = track.samples[i];
+      const onCenter = isWorldPointClearOfTrack(track, s.x, s.z, 6.2);
+      assert.equal(
+        onCenter.clear,
+        false,
+        `Road centerline sample ${i} on ${track.id} must NEVER be marked clear for trees`
+      );
+
+      // Edge of road + 3.35m (the old buggy canopy tree offset!) must also be rejected when margin is 6.2m
+      const oldBuggyCanopyX = s.x + s.rx * (s.width * 0.5 + 3.35);
+      const oldBuggyCanopyZ = s.z + s.rz * (s.width * 0.5 + 3.35);
+      const oldCheck = isWorldPointClearOfTrack(track, oldBuggyCanopyX, oldBuggyCanopyZ, 6.2);
+      assert.equal(
+        oldCheck.clear,
+        false,
+        `Too-close roadside offset (+3.35m) at sample ${i} on ${track.id} must be rejected`
+      );
+    }
+
+    // 2. A distant point outside the circuit bounding box must be accepted
+    const farPoint = isWorldPointClearOfTrack(track, 680, 680, 8.5);
+    assert.equal(farPoint.clear, true, `Distant off-track coordinate on ${track.id} should be clear`);
+  }
+
+  const nonLocal = findNonLocalTrackProximity(TRACKS.monza_storico, 120, 120, 0, 22);
+  assert.ok(nonLocal.minDistM > 0, 'findNonLocalTrackProximity must return positive distance');
+});
+
+test('computeRacingLineProfile and evaluateRacingLineSegmentVisual classify accelerate, coast, and brake zones', () => {
+  const track = TRACKS.monza_storico;
+  const f1Car = CLASSIC_CARS.find((c) => c.id === 'scuderia_f1_68');
+  assert.ok(f1Car, '1968 Scuderia 312 F1 must exist in CLASSIC_CARS');
+  assert.equal(f1Car.bodyStyle, 'f1_monoposto');
+
+  const stats = computeEffectiveCarStats(f1Car, DEFAULT_UPGRADES, DEFAULT_TUNING);
+  const profile = computeRacingLineProfile(track, stats, 1.0);
+  assert.equal(profile.length, track.samples.length, 'Profile must match track sample count');
+
+  const zones = new Set(profile.map((p) => p.zone));
+  assert.ok(zones.has('accelerate'), 'Profile must include emerald acceleration zones');
+  assert.ok(zones.has('brake'), 'Profile must include crimson braking zones before corners');
+  assert.ok(zones.has('coast'), 'Profile must include amber turn-in / coast apex zones');
+
+  const brakePt = profile.find((p) => p.zone === 'brake')!;
+  const accelPt = profile.find((p) => p.zone === 'accelerate')!;
+
+  const n = track.samples.length;
+  const brakeVis = evaluateRacingLineSegmentVisual(
+    brakePt,
+    (brakePt.index - 8 + n) % n,
+    brakePt.idealSpeedMs,
+    n
+  );
+  const accelVis = evaluateRacingLineSegmentVisual(
+    accelPt,
+    (accelPt.index - 8 + n) % n,
+    accelPt.idealSpeedMs * 0.8,
+    n
+  );
+
+  assert.ok(brakeVis.r > brakeVis.g, 'Braking zone must be predominantly crimson red');
+  assert.ok(accelVis.g > accelVis.r, 'Acceleration zone must be predominantly emerald green');
+
+  // Live player overspeed into an upcoming segment must dynamically shift toward crimson warning
+  const overspeedVis = evaluateRacingLineSegmentVisual(
+    accelPt,
+    (accelPt.index - 6 + n) % n,
+    accelPt.idealSpeedMs + 18,
+    n
+  );
+  assert.equal(overspeedVis.zone, 'brake', 'Approaching a segment far above ideal speed must flare crimson brake warning');
+  assert.ok(overspeedVis.r > 0.85, 'Overspeed segment must have high red intensity');
+});
+
+
+
 

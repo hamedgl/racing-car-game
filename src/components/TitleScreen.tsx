@@ -24,6 +24,7 @@ interface TitleScreenProps {
   credits: number;
   onlineCount: number;
   onStartRace: () => void;
+  onCycleCar: () => void;
   onOpenGarage: () => void;
   onOpenTracks: () => void;
   onOpenLeaderboards: () => void;
@@ -39,6 +40,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
   credits,
   onlineCount,
   onStartRace,
+  onCycleCar,
   onOpenGarage,
   onOpenTracks,
   onOpenLeaderboards,
@@ -86,7 +88,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
       {/* Top Perimeter Status Line (Unboxed clean metadata, zero pills) */}
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-2 text-xs tracking-wider text-[#d6d1c7] font-medium">
-          <span>FIA Historic Grand Touring Championship · 1967 Season</span>
+          <span>FIA Historic Grand Touring & Formula 1 · 1967–68 Season</span>
           <span aria-hidden="true">·</span>
           <span className="font-mono-tabular text-[#f59e0b]">
             STAGE {activeLevel.level}: {activeLevel.title.toUpperCase()}
@@ -120,14 +122,14 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
               </h1>
               <div className="h-[1.5px] w-full bg-[#d97706]/80 my-1.5" />
               <div className="text-xs font-semibold tracking-[0.22em] uppercase text-[#e5dec9]">
-                HISTORIC GT CHAMPIONSHIP
+                HISTORIC GT & F1 CHAMPIONSHIP
               </div>
             </div>
           </div>
 
           <p className="text-sm text-[#cfc9bc] leading-relaxed">
-            Authentic 1967 Grand Touring machinery. Manage dynamic 4-corner tire wear, thermal blistering,
-            and pit stop compound strategies across 5 mountain & grand prix circuits.
+            Authentic 1967–68 Grand Touring & Open-Wheel Formula 1 machinery. Master the dynamic 3D
+            braking/acceleration racing line, 4-corner tire wear, and pit stop strategies across 5 European circuits.
           </p>
         </div>
 
@@ -146,6 +148,14 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
               referrerPolicy="no-referrer"
               className="absolute bottom-1.5 left-2 w-9 h-9 object-contain drop-shadow"
             />
+            <button
+              type="button"
+              data-testid="cycle-chassis-btn"
+              onClick={onCycleCar}
+              className="absolute top-1.5 right-2 px-2 py-0.5 rounded bg-[#141824]/90 hover:bg-[#1e293b] border border-[#f59e0b]/40 text-[10px] font-mono-tabular font-semibold text-[#f59e0b] transition-colors cursor-pointer"
+            >
+              Switch Chassis [V] →
+            </button>
             <img
               src={tireBadgePng}
               alt={`${startingCompound} Tire Compound`}
@@ -220,7 +230,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
       {/* Bottom Safe Margin: Single flat borderless inline control-hint line */}
       <div className="flex items-center justify-between text-xs text-[#cfc9bc] tracking-wide">
         <span>
-          WASD / Arrows Drive · Space Drift · Shift Nitro · B Pit Stop · T Tire Compound · C Camera
+          WASD / Arrows Drive · Space Drift · Shift Nitro · L Racing Line · B Pit Stop · V Chassis · C Camera
         </span>
         <span className="hidden sm:inline text-[#a39c8e]">
           {selectedCar.origin} · {selectedCar.displacement}

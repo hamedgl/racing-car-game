@@ -1,6 +1,27 @@
 export type GameState = 'title' | 'playing' | 'paused' | 'gameover';
 
-export type CameraMode = 'chase' | 'chase_far' | 'bonnet' | 'cockpit' | 'bumper' | 'tv_side';
+export type CameraMode =
+  | 'chase'
+  | 'drift'
+  | 'chase_far'
+  | 'bonnet'
+  | 'cockpit'
+  | 'bumper'
+  | 'tv_side';
+
+export interface DriftCameraKinematics {
+  panYawRad: number;
+  lateralOffsetM: number;
+  followDistanceM: number;
+  heightOffsetM: number;
+  lookAheadDistanceM: number;
+  lookLateralM: number;
+  tiltRollRad: number;
+  pitchOffsetRad: number;
+  fovDeg: number;
+  driftAngleDeg: number;
+  driftIntensity: number;
+}
 
 export type TrackId =
   | 'monza_storico'
@@ -131,8 +152,27 @@ export interface ClassicCarSpec {
     dragCoeff: number;
     wheelbaseM: number;
   };
-  bodyStyle: 'italian_gt' | 'british_coupe' | 'stuttgart_911' | 'detroit_proto';
+  bodyStyle: 'italian_gt' | 'british_coupe' | 'stuttgart_911' | 'detroit_proto' | 'f1_monoposto';
   defaultLivery: CarLivery;
+}
+
+export type RacingLineZone = 'accelerate' | 'coast' | 'brake';
+
+export interface RacingLinePointProfile {
+  index: number;
+  s: number;
+  idealSpeedMs: number;
+  zone: RacingLineZone;
+  brakingIntensity: number; // 0..1 normalized deceleration demand
+}
+
+export interface RacingLineSegmentVisual {
+  zone: RacingLineZone;
+  r: number;
+  g: number;
+  b: number;
+  alpha: number;
+  chevronBoost: number;
 }
 
 export interface EffectiveCarStats {
@@ -251,6 +291,10 @@ export interface VehiclePhysicsState {
   onKerb: boolean;           // true when riding serrated apex rumble kerbs
   kerbVibration: number;     // high-frequency serrated kerb harmonic
   isDrifting: boolean;
+  driftAngleDeg?: number;
+  driftDurationSec?: number;
+  lastDriftDir?: number;
+  lastDriftMilestone?: number;
   isOffTrack: boolean;
   isDrafting: boolean;
   hitFlashTimer: number;

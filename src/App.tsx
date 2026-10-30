@@ -46,6 +46,7 @@ import { StatusModal } from './components/StatusModal';
 
 const CAMERA_SEQUENCE: CameraMode[] = [
   'chase',
+  'drift',
   'chase_far',
   'bonnet',
   'cockpit',
@@ -66,7 +67,19 @@ export default function App() {
   const [gameState, setGameState] = useState<GameState>(initialAutostart ? 'playing' : 'title');
   const [activeModal, setActiveModal] = useState<'none' | 'garage' | 'tracks' | 'leaderboards'>('none');
 
-  const [selectedCar, setSelectedCar] = useState<ClassicCarSpec>(CLASSIC_CARS[0]);
+  const [selectedCar, setSelectedCar] = useState<ClassicCarSpec>(() => {
+    if (typeof window !== 'undefined') {
+      const carParam = new URLSearchParams(window.location.search).get('car');
+      if (carParam === 'f1' || carParam === 'scuderia_f1_68') {
+        return CLASSIC_CARS.find((c) => c.id === 'scuderia_f1_68') || CLASSIC_CARS[0];
+      }
+      if (carParam) {
+        const match = CLASSIC_CARS.find((c) => c.id === carParam);
+        if (match) return match;
+      }
+    }
+    return CLASSIC_CARS[0];
+  });
   const [liveryMap, setLiveryMap] = useState<Record<string, CarLivery>>(() => {
     const map: Record<string, CarLivery> = {};
     for (const c of CLASSIC_CARS) {
@@ -87,7 +100,15 @@ export default function App() {
   const [activePresetKey, setActivePresetKey] = useState<string>('balanced_gt');
 
   const [activeLevel, setActiveLevel] = useState<ChampionshipLevelSpec>(CHAMPIONSHIP_LEVELS[0]);
-  const [selectedTrack, setSelectedTrack] = useState<TrackSpec>(TRACKS.monza_storico);
+  const [selectedTrack, setSelectedTrack] = useState<TrackSpec>(() => {
+    if (typeof window !== 'undefined') {
+      const trackParam = new URLSearchParams(window.location.search).get('track') as TrackId | null;
+      if (trackParam && TRACKS[trackParam]) {
+        return TRACKS[trackParam];
+      }
+    }
+    return TRACKS.monza_storico;
+  });
   const [cameraMode, setCameraMode] = useState<CameraMode>(() => {
     if (typeof window !== 'undefined') {
       const camParam = new URLSearchParams(window.location.search).get('cam');
@@ -96,6 +117,13 @@ export default function App() {
       }
     }
     return 'chase';
+  });
+  const [showRacingLine, setShowRacingLine] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const lineParam = new URLSearchParams(window.location.search).get('line');
+      if (lineParam === '0' || lineParam === 'false') return false;
+    }
+    return true;
   });
   const [handlingMode, setHandlingMode] = useState<HandlingMode>('pro_assisted');
   const [isMuted, setIsMuted] = useState<boolean>(false);
@@ -110,6 +138,17 @@ export default function App() {
 
   const handleToggleHandlingMode = useCallback(() => {
     setHandlingMode((prev) => (prev === 'pro_assisted' ? 'pure_historic' : 'pro_assisted'));
+  }, []);
+
+  const handleToggleRacingLine = useCallback(() => {
+    setShowRacingLine((prev) => !prev);
+  }, []);
+
+  const handleCycleCar = useCallback(() => {
+    setSelectedCar((prev) => {
+      const idx = CLASSIC_CARS.findIndex((c) => c.id === prev.id);
+      return CLASSIC_CARS[(idx + 1) % CLASSIC_CARS.length];
+    });
   }, []);
 
   const handleCycleWeather = useCallback(() => {
@@ -208,6 +247,8 @@ export default function App() {
     bestLapTimeMs: 0,
     lastLapTimeMs: 0,
     isDrifting: false,
+    driftAngleDeg: 0,
+    driftDurationSec: 0,
     isDrafting: false,
     isOffTrack: false,
     driftScore: 0,
@@ -480,6 +521,10 @@ export default function App() {
         handleCycleCamera();
       } else if (e.code === 'KeyH' && (gameState === 'playing' || gameState === 'paused')) {
         handleToggleHandlingMode();
+      } else if (e.code === 'KeyL' && (gameState === 'playing' || gameState === 'paused')) {
+        handleToggleRacingLine();
+      } else if (e.code === 'KeyV' && activeModal === 'none') {
+        handleCycleCar();
       } else if (e.code === 'KeyT' && (gameState === 'playing' || gameState === 'paused')) {
         handleCycleNextPitCompound();
       } else if (e.code === 'KeyB' && gameState === 'playing') {
@@ -499,6 +544,8 @@ export default function App() {
     handleStartRace,
     handleCycleCamera,
     handleToggleHandlingMode,
+    handleToggleRacingLine,
+    handleCycleCar,
     handleCycleNextPitCompound,
     handleTogglePitRequest,
     handleToggleMute,
@@ -532,6 +579,7 @@ export default function App() {
         effectiveStats={effectiveStats}
         selectedTrack={selectedTrack}
         cameraMode={cameraMode}
+        showRacingLine={showRacingLine}
         driverName={driverName}
         weatherCondition={weatherCondition}
         damageMode={damageMode}
@@ -562,6 +610,7 @@ export default function App() {
           credits={credits}
           onlineCount={onlineCount}
           onStartRace={handleStartRace}
+          onCycleCar={handleCycleCar}
           onOpenGarage={() => setActiveModal('garage')}
           onOpenTracks={() => setActiveModal('tracks')}
           onOpenLeaderboards={() => setActiveModal('leaderboards')}
@@ -576,6 +625,7 @@ export default function App() {
           activeLevel={activeLevel}
           cameraMode={cameraMode}
           handlingMode={handlingMode}
+          showRacingLine={showRacingLine}
           isMuted={isMuted}
           nextPitCompound={nextPitCompound}
           pitRequestArmed={pitRequestArmed}
@@ -583,6 +633,7 @@ export default function App() {
           touchInputRef={touchInputRef}
           onCycleCamera={handleCycleCamera}
           onToggleHandlingMode={handleToggleHandlingMode}
+          onToggleRacingLine={handleToggleRacingLine}
           onCycleNextPitCompound={handleCycleNextPitCompound}
           onTogglePitRequest={handleTogglePitRequest}
           onToggleMute={handleToggleMute}
@@ -628,6 +679,7 @@ export default function App() {
           weatherCondition={weatherCondition}
           trackRubberPreset={trackRubberPreset}
           startingCompound={startingCompound}
+          showRacingLine={showRacingLine}
           onSelectTrack={(track) => {
             setSelectedTrack(track);
             const matchingLevel = CHAMPIONSHIP_LEVELS.find((l) => l.trackId === track.id);
@@ -637,6 +689,7 @@ export default function App() {
           onCycleWeather={handleCycleWeather}
           onCycleTrackRubberPreset={handleCycleTrackRubberPreset}
           onCycleStartingCompound={handleCycleStartingCompound}
+          onToggleRacingLine={handleToggleRacingLine}
           onClose={() => setActiveModal('none')}
         />
       )}

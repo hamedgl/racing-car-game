@@ -19,6 +19,7 @@ interface RacingHudProps {
   activeLevel: ChampionshipLevelSpec;
   cameraMode: CameraMode;
   handlingMode: HandlingMode;
+  showRacingLine: boolean;
   isMuted: boolean;
   nextPitCompound: TireCompound;
   pitRequestArmed: boolean;
@@ -26,6 +27,7 @@ interface RacingHudProps {
   touchInputRef: React.MutableRefObject<ControlInput>;
   onCycleCamera: () => void;
   onToggleHandlingMode: () => void;
+  onToggleRacingLine: () => void;
   onCycleNextPitCompound: () => void;
   onTogglePitRequest: () => void;
   onToggleMute: () => void;
@@ -35,6 +37,7 @@ interface RacingHudProps {
 
 const CAMERA_LABELS: Record<CameraMode, string> = {
   chase: 'CHASE',
+  drift: 'DRIFT',
   chase_far: 'FAR',
   bonnet: 'HOOD',
   cockpit: 'COCKPIT',
@@ -94,6 +97,7 @@ export const RacingHud: React.FC<RacingHudProps> = ({
   activeLevel,
   cameraMode,
   handlingMode,
+  showRacingLine,
   isMuted,
   nextPitCompound,
   pitRequestArmed,
@@ -101,6 +105,7 @@ export const RacingHud: React.FC<RacingHudProps> = ({
   touchInputRef,
   onCycleCamera,
   onToggleHandlingMode,
+  onToggleRacingLine,
   onCycleNextPitCompound,
   onTogglePitRequest,
   onToggleMute,
@@ -120,7 +125,7 @@ export const RacingHud: React.FC<RacingHudProps> = ({
     if (s.z < minZ) minZ = s.z;
     if (s.z > maxZ) maxZ = s.z;
   }
-  const pad = 28;
+  const pad = 26;
   const spanX = Math.max(1, maxX - minX + pad * 2);
   const spanZ = Math.max(1, maxZ - minZ + pad * 2);
   const scale = 112 / Math.max(spanX, spanZ);
@@ -134,15 +139,36 @@ export const RacingHud: React.FC<RacingHudProps> = ({
       .map((s, idx) => `${idx === 0 ? 'M' : 'L'}${toMapX(s.x).toFixed(1)},${toMapY(s.z).toFixed(1)}`)
       .join(' ') + ' Z';
 
-  const racingLinePathD =
-    samples
-      .filter((_, idx) => idx % 4 === 0)
-      .map((s, idx) => {
-        const lx = s.x + s.rx * s.racingLineOffset;
-        const lz = s.z + s.rz * s.racingLineOffset;
-        return `${idx === 0 ? 'M' : 'L'}${toMapX(lx).toFixed(1)},${toMapY(lz).toFixed(1)}`;
-      })
-      .join(' ') + ' Z';
+  // Color-coded minimap telemetry segments (Braking = Crimson, Turn-in/Coast = Amber, Accelerate = Emerald)
+  const mapZones = useMemo(() => {
+    const step = 4;
+    const pts = samples.filter((_, idx) => idx % step === 0);
+    const m = pts.length;
+    const segs: Array<{ d: string; color: string }> = [];
+    for (let i = 0; i < m; i++) {
+      const s0 = pts[i];
+      const s1 = pts[(i + 1) % m];
+      const s2 = pts[(i + 2) % m];
+      const s3 = pts[(i + 3) % m];
+      const x0 = toMapX(s0.x + s0.rx * s0.racingLineOffset);
+      const y0 = toMapY(s0.z + s0.rz * s0.racingLineOffset);
+      const x1 = toMapX(s1.x + s1.rx * s1.racingLineOffset);
+      const y1 = toMapY(s1.z + s1.rz * s1.racingLineOffset);
+      const currK = Math.abs(s0.curvature);
+      const aheadK = Math.max(Math.abs(s1.curvature), Math.abs(s2.curvature), Math.abs(s3.curvature));
+      let color = '#10b981'; // Emerald accelerate
+      if (aheadK >= 0.0085 && aheadK > currK * 1.05) {
+        color = '#ef4444'; // Crimson braking zone
+      } else if (currK >= 0.0075) {
+        color = '#f59e0b'; // Amber apex / coast
+      }
+      segs.push({
+        d: `M${x0.toFixed(1)},${y0.toFixed(1)} L${x1.toFixed(1)},${y1.toFixed(1)}`,
+        color,
+      });
+    }
+    return segs;
+  }, [samples, minX, maxX, minZ, maxZ, scale]);
 
   const rpmRatio = Math.max(0, Math.min(1, hud.rpm / 9000));
   const needleDeg = -130 + rpmRatio * 260;
@@ -506,9 +532,15 @@ export const RacingHud: React.FC<RacingHudProps> = ({
           )}
 
           {hud.isDrifting && !tires.pitStopActive && (
-            <div className="px-3.5 py-1.5 rounded border border-[#f59e0b]/50 bg-[#0b0f17]/90 text-center shadow-lg">
-              <div className="text-[9px] md:text-[10px] font-bold tracking-widest text-[#f59e0b] uppercase">
-                FOUR-WHEEL DRIFT
+            <div
+              data-testid="drift-telemetry-banner"
+              className="px-3.5 py-1.5 rounded border border-[#f59e0b]/70 bg-[#0b0f17]/92 text-center shadow-lg"
+            >
+              <div className="flex items-center justify-center gap-2 text-[9px] md:text-[10px] font-bold tracking-widest text-[#f59e0b] uppercase">
+                <span>FOUR-WHEEL DRIFT</span>
+                <span className="px-1.5 py-0.2 rounded bg-[#f59e0b]/20 text-[#fcd34d] font-mono-tabular">
+                  {Math.max(6, Math.round(hud.driftAngleDeg ?? 12))}° SLIP
+                </span>
               </div>
               <div className="text-xs md:text-lg font-display font-extrabold text-[#f5f2eb] font-mono-tabular">
                 +{hud.driftScore} PTS
@@ -520,6 +552,28 @@ export const RacingHud: React.FC<RacingHudProps> = ({
         {/* CLUSTER 2: Top-Right Camera Switcher, Utility Controls & Circuit Radar */}
         <div className="flex flex-col items-end gap-1.5 md:gap-2 shrink-0">
           <div className="flex items-center gap-1 md:gap-1.5 pointer-events-auto">
+            {/* Dynamic Racing Line Overlay Toggle Button */}
+            <button
+              type="button"
+              tabIndex={-1}
+              data-testid="toggle-racing-line-btn"
+              aria-label="Toggle Dynamic Racing Line"
+              title={`Toggle 3D Telemetry Racing Line [L]: ${showRacingLine ? 'ON (Emerald/Amber/Crimson Zones)' : 'OFF'}`}
+              onClick={(e) => {
+                e.currentTarget.blur();
+                onToggleRacingLine();
+              }}
+              className={`h-8 md:h-9 px-2 md:px-2.5 flex items-center gap-1.5 rounded border transition-colors cursor-pointer ${
+                showRacingLine
+                  ? 'border-[#10b981]/60 bg-[#0b0f17]/90 hover:bg-[#064e3b]/50 text-[#34d399]'
+                  : 'border-[#f5f2eb]/20 bg-[#0b0f17]/90 hover:bg-[#1e293b] text-[#94a3b8]'
+              }`}
+            >
+              <span className="text-[10px] md:text-[11px] font-mono-tabular font-bold tracking-wider uppercase">
+                {showRacingLine ? 'LINE: ON' : 'LINE: OFF'}
+              </span>
+            </button>
+
             {/* Handling Assistance Mode Toggle Button */}
             <button
               type="button"
@@ -553,7 +607,11 @@ export const RacingHud: React.FC<RacingHudProps> = ({
                 e.currentTarget.blur();
                 onCycleCamera();
               }}
-              className="h-8 md:h-9 px-2 md:px-2.5 flex items-center gap-1.5 rounded border border-[#f5f2eb]/20 bg-[#0b0f17]/90 hover:bg-[#1e293b] text-[#f5f2eb] transition-colors cursor-pointer"
+              className={`h-8 md:h-9 px-2 md:px-2.5 flex items-center gap-1.5 rounded border transition-colors cursor-pointer ${
+                cameraMode === 'drift'
+                  ? 'border-[#f59e0b]/70 bg-[#78350f]/45 hover:bg-[#78350f]/65 text-[#fef08a]'
+                  : 'border-[#f5f2eb]/20 bg-[#0b0f17]/90 hover:bg-[#1e293b] text-[#f5f2eb]'
+              }`}
             >
               <svg
                 viewBox="0 0 24 24"
@@ -633,22 +691,30 @@ export const RacingHud: React.FC<RacingHudProps> = ({
             </button>
           </div>
 
-          {/* Circuit Minimap showing optimal rubbered racing groove & Pit Stall */}
+          {/* Circuit Telemetry Minimap showing Braking/Coast/Acceleration Zones & Live Cars */}
           <div
-            className="w-20 h-20 md:w-32 md:h-32 rounded border border-[#f5f2eb]/15 p-1 md:p-1.5 flex items-center justify-center"
-            style={{ backgroundColor: 'rgba(11, 15, 23, 0.88)' }}
+            data-testid="circuit-minimap"
+            className="w-24 h-24 md:w-36 md:h-36 rounded border border-[#f5f2eb]/15 p-1.5 flex flex-col justify-between"
+            style={{ backgroundColor: 'rgba(11, 15, 23, 0.90)' }}
           >
             <svg viewBox="0 0 128 128" className="w-full h-full">
-              <path d={trackPathD} fill="none" stroke="#475569" strokeWidth="5.5" strokeLinejoin="round" />
-              <path
-                d={racingLinePathD}
-                fill="none"
-                stroke="#0f172a"
-                strokeWidth="2.2"
-                strokeDasharray="3 2"
-                strokeLinejoin="round"
-              />
-              <circle cx={toMapX(0)} cy={toMapY(0)} r="3.2" fill="#f8fafc" stroke="#09090b" strokeWidth="1" />
+              {/* Outer Curb / Border Shadow */}
+              <path d={trackPathD} fill="none" stroke="#090d16" strokeWidth="9" strokeLinejoin="round" />
+              {/* Asphalt Ribbon */}
+              <path d={trackPathD} fill="none" stroke="#334155" strokeWidth="6" strokeLinejoin="round" />
+              {/* Color-Coded Braking / Coast / Acceleration Racing Line Segments */}
+              {mapZones.map((seg, idx) => (
+                <path
+                  key={idx}
+                  d={seg.d}
+                  fill="none"
+                  stroke={showRacingLine ? seg.color : '#64748b'}
+                  strokeWidth="2.4"
+                  strokeLinecap="round"
+                />
+              ))}
+              {/* Checkered Start/Finish Marker */}
+              <circle cx={toMapX(0)} cy={toMapY(0)} r="3.4" fill="#f8fafc" stroke="#09090b" strokeWidth="1.2" />
 
               {remoteRacers
                 .filter((r) => r.trackId === track.id)
@@ -661,10 +727,10 @@ export const RacingHud: React.FC<RacingHudProps> = ({
                   key={v.id}
                   cx={toMapX(v.x)}
                   cy={toMapY(v.z)}
-                  r={v.isPlayer ? 4.5 : 3.5}
+                  r={v.isPlayer ? 4.8 : 3.5}
                   fill={v.isPlayer ? '#f59e0b' : v.color}
                   stroke="#09090b"
-                  strokeWidth="1.2"
+                  strokeWidth="1.3"
                 />
               ))}
             </svg>

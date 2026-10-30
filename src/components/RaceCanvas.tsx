@@ -13,6 +13,7 @@ import {
   HandlingMode,
   PitStopAnimationState,
   PitStopPhase,
+  RacingLinePointProfile,
   RemoteRacerTelemetry,
   TireCompound,
   TrackRubberPreset,
@@ -29,9 +30,11 @@ import {
   applyTrackRubberPreset,
   computeAIControls,
   computeEffectiveCarStats,
+  computeRacingLineProfile,
   createInitialTrackRubberState,
   createInitialVehicleState,
   createInitialWeatherState,
+  evaluateDriftCameraKinematics,
   evaluatePitStopAnimation,
   getSortedStandings,
   PIT_STOP_DURATION_SEC,
@@ -73,6 +76,8 @@ export interface LiveHudSnapshot {
   bestLapTimeMs: number;
   lastLapTimeMs: number;
   isDrifting: boolean;
+  driftAngleDeg?: number;
+  driftDurationSec?: number;
   isDrafting: boolean;
   isOffTrack: boolean;
   driftScore: number;
@@ -139,6 +144,7 @@ interface RaceCanvasProps {
   effectiveStats: EffectiveCarStats;
   selectedTrack: TrackSpec;
   cameraMode: CameraMode;
+  showRacingLine: boolean;
   driverName: string;
   weatherCondition: WeatherCondition;
   damageMode: DamageMode;
@@ -176,6 +182,7 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
   effectiveStats,
   selectedTrack,
   cameraMode,
+  showRacingLine,
   driverName,
   weatherCondition,
   damageMode,
@@ -203,6 +210,7 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
     effectiveStats,
     selectedTrack,
     cameraMode,
+    showRacingLine,
     driverName,
     weatherCondition,
     damageMode,
@@ -227,6 +235,7 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
       effectiveStats,
       selectedTrack,
       cameraMode,
+      showRacingLine,
       driverName,
       weatherCondition,
       damageMode,
@@ -249,6 +258,7 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
     effectiveStats,
     selectedTrack,
     cameraMode,
+    showRacingLine,
     driverName,
     weatherCondition,
     damageMode,
@@ -420,12 +430,23 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
       stateRef.current.selectedTrack.samples.length,
       stateRef.current.trackRubberPreset
     );
+    let currentRacingLineProfile: RacingLinePointProfile[] = computeRacingLineProfile(
+      stateRef.current.selectedTrack,
+      stateRef.current.effectiveStats,
+      currentWeather.gripMultiplier
+    );
+    let lastProfileCarSpeed = stateRef.current.effectiveStats.topSpeedKmh;
     let driftScoreAccumulator = 0;
     let raceElapsedMs = 0;
     let cleanRaceFlag = true;
     let hitstopTimer = 0;
     let trauma = 0;
     let titleOrbitAngle = 0.4;
+    let driftPanYaw = 0;
+    let driftLatOffset = 0;
+    let driftLookLat = 0;
+    let driftTiltRoll = 0;
+    let driftPitchOffset = 0;
     let lastHudEmitTime = 0;
     let lastBroadcastTime = 0;
     let lastEnvVisualSyncTime = 0;
@@ -446,9 +467,22 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
         track.samples.length,
         stateRef.current.trackRubberPreset
       );
+      currentRacingLineProfile = computeRacingLineProfile(
+        track,
+        stateRef.current.effectiveStats,
+        currentWeather.gripMultiplier
+      );
+      lastProfileCarSpeed = stateRef.current.effectiveStats.topSpeedKmh;
       trackEnvRig = buildTrackEnvironment(track, isSoftwareGl, maxAnisotropy);
       trackEnvRig.updateWeatherVisuals(currentWeather);
       trackEnvRig.updateTrackRubberVisuals(currentRubberState, currentWeather);
+      trackEnvRig.updateDynamicRacingLineVisuals(
+        currentRacingLineProfile,
+        0,
+        0,
+        0,
+        stateRef.current.showRacingLine
+      );
       scene.add(trackEnvRig.group);
       skidMarks.clear();
     };
@@ -504,22 +538,42 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
       });
       playerVehicle.tires.nextPitCompound = nCompound;
 
-      const stationParam = Number(new URLSearchParams(window.location.search).get('station'));
+      const urlParams = new URLSearchParams(window.location.search);
+      const stationParam = Number(urlParams.get('station'));
+      const driftParam = urlParams.get('drift') === '1';
       if (Number.isFinite(stationParam) && stationParam > 0 && track.samples.length > 0) {
         const sIdx = Math.floor(stationParam) % track.samples.length;
         const samp = track.samples[sIdx];
+        const trackYaw = Math.atan2(samp.tx, samp.tz);
         playerVehicle.x = samp.x;
         playerVehicle.y = samp.y;
         playerVehicle.z = samp.z;
-        playerVehicle.yaw = Math.atan2(samp.tx, samp.tz);
+        playerVehicle.yaw = driftParam ? trackYaw - 0.36 : trackYaw;
         playerVehicle.trackSampleIndex = sIdx;
         playerVehicle.lapProgress = sIdx / track.samples.length;
         playerVehicle.totalRaceDistanceM = samp.distanceM;
-        playerVehicle.speedMs = 36;
-        playerVehicle.vx = samp.tx * 36;
-        playerVehicle.vz = samp.tz * 36;
-        playerVehicle.gear = 3;
-        playerVehicle.rpm = 5800;
+        playerVehicle.speedMs = driftParam ? 44 : 36;
+        playerVehicle.vx = samp.tx * playerVehicle.speedMs;
+        playerVehicle.vz = samp.tz * playerVehicle.speedMs;
+        playerVehicle.gear = driftParam ? 4 : 3;
+        playerVehicle.rpm = driftParam ? 6850 : 5800;
+        if (driftParam) {
+          playerVehicle.slipAngleRad = 0.42;
+          playerVehicle.driftAngleDeg = 24.1;
+          playerVehicle.isDrifting = true;
+          playerVehicle.driftDurationSec = 1.45;
+          playerVehicle.angularVelocity = -0.58;
+          playerVehicle.steerAngle = -0.26;
+          playerVehicle.rollRad = 0.045;
+          playerVehicle.throttle = 0.95;
+          playerVehicle.styleScore = 640;
+          playerVehicle.styleCombo = 2;
+          playerVehicle.comboTimer = 4.5;
+          playerVehicle.lastActionBanner = 'APEX POWER SLIDE';
+          playerVehicle.lastActionPoints = 200;
+          playerVehicle.lastActionTimer = 2.0;
+          driftScoreAccumulator = 420;
+        }
       }
 
       const playerRig = buildClassicCarMesh(pCar, pLivery, isSoftwareGl, maxAnisotropy);
@@ -576,6 +630,8 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
       const p = vehiclesState[0];
       const fx = Math.sin(p.yaw);
       const fz = Math.cos(p.yaw);
+      const rx = fz;
+      const rz = -fx;
       if (stateRef.current.gameState === 'title') {
         const initOrbit = p.yaw + 0.65;
         const radius = stateRef.current.isGarageOpen ? 5.6 : 6.2;
@@ -591,11 +647,39 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
           p.y + 0.55,
           p.z - Math.sin(initOrbit) * rightShift
         );
+        camera.lookAt(_smoothLookAt);
+      } else if (stateRef.current.cameraMode === 'drift') {
+        const initDriftCam = evaluateDriftCameraKinematics(
+          p,
+          stateRef.current.effectiveStats.maxSpeedMs
+        );
+        driftPanYaw = initDriftCam.panYawRad;
+        driftLatOffset = initDriftCam.lateralOffsetM;
+        driftLookLat = initDriftCam.lookLateralM;
+        driftTiltRoll = initDriftCam.tiltRollRad;
+        driftPitchOffset = initDriftCam.pitchOffsetRad;
+        const pannedYaw = p.yaw + driftPanYaw;
+        const pFx = Math.sin(pannedYaw);
+        const pFz = Math.cos(pannedYaw);
+        const pRx = pFz;
+        const pRz = -pFx;
+        camera.position.set(
+          p.x - pFx * initDriftCam.followDistanceM + pRx * driftLatOffset,
+          p.y + initDriftCam.heightOffsetM,
+          p.z - pFz * initDriftCam.followDistanceM + pRz * driftLatOffset
+        );
+        _smoothLookAt.set(
+          p.x + pFx * initDriftCam.lookAheadDistanceM + rx * driftLookLat,
+          p.y + 0.72 + driftPitchOffset * 4.5,
+          p.z + pFz * initDriftCam.lookAheadDistanceM + rz * driftLookLat
+        );
+        camera.lookAt(_smoothLookAt);
+        camera.rotation.z += driftTiltRoll;
       } else {
         camera.position.set(p.x - fx * 6.5, p.y + 2.3, p.z - fz * 6.5);
         _smoothLookAt.set(p.x + fx * 6, p.y + 0.9, p.z + fz * 6);
+        camera.lookAt(_smoothLookAt);
       }
-      camera.lookAt(_smoothLookAt);
     };
 
     const rebuildPlayerCar = (spec: ClassicCarSpec, liv: CarLivery) => {
@@ -740,10 +824,27 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
 
           // Update Dynamic Weather & throttle Track Environment shader/material sync to ~5Hz
           updateWeather(currentWeather, dt, raceElapsedMs);
+          if (Math.abs(pStats.topSpeedKmh - lastProfileCarSpeed) > 1) {
+            lastProfileCarSpeed = pStats.topSpeedKmh;
+            currentRacingLineProfile = computeRacingLineProfile(
+              track,
+              pStats,
+              currentWeather.gripMultiplier
+            );
+          }
           if (trackEnvRig && now - lastEnvVisualSyncTime > 180) {
             lastEnvVisualSyncTime = now;
             trackEnvRig.updateWeatherVisuals(currentWeather);
             trackEnvRig.updateTrackRubberVisuals(currentRubberState, currentWeather);
+          }
+          if (trackEnvRig) {
+            trackEnvRig.updateDynamicRacingLineVisuals(
+              currentRacingLineProfile,
+              player.trackSampleIndex,
+              player.speedMs,
+              raceElapsedMs * 0.001,
+              stateRef.current.showRacingLine
+            );
           }
 
           // Rain streaks & Skid marks updates
@@ -1154,25 +1255,31 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
               );
             }
 
-            // Dry tire smoke on drift or dirt spray
+            // Dry tire smoke on drift or dirt spray (enhanced dual-rear-wheel plumes for deep drifts)
             if (
               currentWeather.wetness <= 0.22 &&
               (v.isDrifting || v.isOffTrack) &&
-              v.speedMs > 10 &&
-              Math.random() < 0.65
+              v.speedMs > 9.5 &&
+              Math.random() < (v.isDrifting ? 0.85 : 0.65)
             ) {
-              const side = Math.random() > 0.5 ? 0.85 : -0.85;
-              particles.spawn(
-                v.x - fx * 1.3 + rx * side,
-                v.y + 0.16,
-                v.z - fz * 1.3 + rz * side,
-                (Math.random() - 0.5) * 2.5,
-                0.6 + Math.random() * 1.2,
-                (Math.random() - 0.5) * 2.5,
-                v.isOffTrack ? 0x78350f : 0xe2e8f0,
-                1.35,
-                0.42
-              );
+              const absSlipAngle = Math.abs(v.slipAngleRad);
+              const smokeScale = v.isDrifting
+                ? 1.25 + Math.min(1.1, absSlipAngle * 2.2)
+                : 1.35;
+              const sides = v.isDrifting && absSlipAngle > 0.20 ? [-0.84, 0.84] : [Math.random() > 0.5 ? 0.85 : -0.85];
+              for (const side of sides) {
+                particles.spawn(
+                  v.x - fx * 1.32 + rx * side,
+                  v.y + 0.16,
+                  v.z - fz * 1.32 + rz * side,
+                  -v.vx * 0.12 + (Math.random() - 0.5) * 2.8,
+                  0.65 + Math.random() * 1.35,
+                  -v.vz * 0.12 + (Math.random() - 0.5) * 2.8,
+                  v.isOffTrack ? 0x78350f : 0xe2e8f0,
+                  smokeScale,
+                  0.46
+                );
+              }
             }
           }
 
@@ -1337,16 +1444,20 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
           ghostRig.root.rotation.y = r.yaw;
         }
 
-        // 6-Mode Precision Camera Rig ('chase' | 'chase_far' | 'bonnet' | 'cockpit' | 'bumper' | 'tv_side')
+        // 7-Mode Precision Camera Rig ('chase' | 'drift' | 'chase_far' | 'bonnet' | 'cockpit' | 'bumper' | 'tv_side')
         const fx = Math.sin(player.yaw);
         const fz = Math.cos(player.yaw);
         const rx = fz; // Right vector X (-X in local car space)
         const rz = -fx; // Right vector Z
 
+        const driftCam = evaluateDriftCameraKinematics(player, pStats.maxSpeedMs);
+
         const speedNorm = Math.min(1, player.speedMs / pStats.maxSpeedMs);
         const baseFov =
           camMode === 'chase'
             ? 59
+            : camMode === 'drift'
+            ? driftCam.fovDeg
             : camMode === 'chase_far'
             ? 56
             : camMode === 'cockpit'
@@ -1357,14 +1468,18 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
             ? 52
             : 64;
         const fovDynamicDelta =
-          camMode === 'cockpit'
+          camMode === 'drift'
+            ? player.isDrafting
+              ? 3.0
+              : 0
+            : camMode === 'cockpit'
             ? speedNorm * 3.0 + (player.isBoosting ? 2.2 : 0)
             : speedNorm * 11 + (player.isDrafting ? 3.5 : 0) + (player.isBoosting ? 6.5 : 0);
         const targetFov = player.tires.pitStopActive ? 48 : baseFov + fovDynamicDelta;
         const nextFov = THREE.MathUtils.damp(
           camera.fov,
           targetFov,
-          player.tires.pitStopActive ? 10 : 6,
+          player.tires.pitStopActive ? 10 : camMode === 'drift' ? 8 : 6,
           dt
         );
         if (Math.abs(nextFov - camera.fov) > 0.04) {
@@ -1394,11 +1509,55 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
             _smoothLookAt.lerp(_camLookAt, 1 - Math.exp(-16 * dt));
           }
           camera.lookAt(_smoothLookAt);
+        } else if (camMode === 'drift') {
+          // Dynamic Drift Camera Mode:
+          // Smoothly pans orbital yaw & lateral offset into the velocity vector / corner apex
+          // and dynamically tilts horizon roll & pitch based on slip angle and high-speed cornering G-load.
+          driftPanYaw = THREE.MathUtils.damp(driftPanYaw, driftCam.panYawRad, 9.5, dt);
+          driftLatOffset = THREE.MathUtils.damp(driftLatOffset, driftCam.lateralOffsetM, 9.0, dt);
+          driftLookLat = THREE.MathUtils.damp(driftLookLat, driftCam.lookLateralM, 11.5, dt);
+          driftTiltRoll = THREE.MathUtils.damp(driftTiltRoll, driftCam.tiltRollRad, 10.5, dt);
+          driftPitchOffset = THREE.MathUtils.damp(driftPitchOffset, driftCam.pitchOffsetRad, 10.0, dt);
+
+          const pannedYaw = player.yaw + driftPanYaw;
+          const pFx = Math.sin(pannedYaw);
+          const pFz = Math.cos(pannedYaw);
+          const pRx = pFz;
+          const pRz = -pFx;
+
+          const targetX = player.x - pFx * driftCam.followDistanceM + pRx * driftLatOffset;
+          const targetZ = player.z - pFz * driftCam.followDistanceM + pRz * driftLatOffset;
+          const camGround = findClosestTrackSample(track, targetX, targetZ, player.trackSampleIndex);
+          const minCamY = Math.max(player.y + 1.08, camGround.surfaceY + 1.12);
+
+          _camTargetPos.set(
+            targetX,
+            Math.max(
+              minCamY,
+              player.y + driftCam.heightOffsetM + Math.sin(Math.max(0, player.pitchRad)) * 1.8
+            ),
+            targetZ
+          );
+          _camLookAt.set(
+            player.x + pFx * driftCam.lookAheadDistanceM + rx * driftLookLat,
+            player.y + 0.72 + driftPitchOffset * 4.5 - Math.sin(player.pitchRad) * 2.0,
+            player.z + pFz * driftCam.lookAheadDistanceM + rz * driftLookLat
+          );
+
+          camera.position.lerp(_camTargetPos, 1 - Math.exp(-14 * dt));
+          if (camera.position.y < minCamY) {
+            camera.position.y = minCamY;
+          }
+          _smoothLookAt.lerp(_camLookAt, 1 - Math.exp(-18 * dt));
+          camera.lookAt(_smoothLookAt);
+          camera.rotation.z += driftTiltRoll;
         } else if (camMode === 'chase' || camMode === 'chase_far') {
+          driftPanYaw = THREE.MathUtils.damp(driftPanYaw, 0, 10, dt);
+          driftTiltRoll = THREE.MathUtils.damp(driftTiltRoll, 0, 10, dt);
           const distBack = camMode === 'chase_far' ? 8.6 : 6.1;
           const heightOffset = camMode === 'chase_far' ? 3.05 : 2.12;
           const lookAhead = camMode === 'chase_far' ? 10.5 : 8.2;
-          const swingOffset = -player.angularVelocity * 0.85;
+          const swingOffset = -player.angularVelocity * 0.85 - Math.sin(player.slipAngleRad) * 0.75;
           const targetX = player.x - fx * distBack + rx * swingOffset;
           const targetZ = player.z - fz * distBack + rz * swingOffset;
           const camGround = findClosestTrackSample(track, targetX, targetZ, player.trackSampleIndex);
@@ -1409,9 +1568,9 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
             targetZ
           );
           _camLookAt.set(
-            player.x + fx * lookAhead,
+            player.x + fx * lookAhead + rx * Math.sin(player.slipAngleRad) * 1.6,
             player.y + 0.78 - Math.sin(player.pitchRad) * 2.2,
-            player.z + fz * lookAhead
+            player.z + fz * lookAhead + rz * Math.sin(player.slipAngleRad) * 1.6
           );
           const dampAlpha = 1 - Math.exp(-13 * dt);
           camera.position.lerp(_camTargetPos, dampAlpha);
@@ -1488,7 +1647,9 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
           camera.position.y += Math.cos(engFreq * 1.37) * redlineTremor * camAmp * 0.85;
           camera.rotation.z += Math.sin(engFreq * 0.83) * redlineTremor * 0.0032;
         }
-        camera.rotation.z += -player.rollRad * 0.45;
+        if (camMode !== 'drift') {
+          camera.rotation.z += -player.rollRad * 0.45;
+        }
 
         if (Math.hypot(player.x - lastLightTargetX, player.z - lastLightTargetZ) > 2.5) {
           lastLightTargetX = player.x;
@@ -1514,6 +1675,8 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
             bestLapTimeMs: Math.round(player.bestLapTimeMs),
             lastLapTimeMs: Math.round(player.lastLapTimeMs),
             isDrifting: player.isDrifting,
+            driftAngleDeg: Number((player.driftAngleDeg ?? 0).toFixed(1)),
+            driftDurationSec: Number((player.driftDurationSec ?? 0).toFixed(2)),
             isDrafting: player.isDrafting,
             isOffTrack: player.isOffTrack,
             driftScore: driftScoreAccumulator,
@@ -1627,6 +1790,7 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
     <div
       ref={mountRef}
       data-testid="race-canvas-container"
+      data-camera-mode={cameraMode}
       className="fixed inset-0 w-full h-full overflow-hidden bg-[#0d0c0b]"
     />
   );

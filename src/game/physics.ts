@@ -22,6 +22,10 @@ import {
   HandlingMode,
   BreakablePropState,
   BreakablePropType,
+  DriftCameraKinematics,
+  RacingLineZone,
+  RacingLinePointProfile,
+  RacingLineSegmentVisual,
 } from './types';
 import { findClosestTrackSample } from './tracks';
 
@@ -70,6 +74,132 @@ export function awardDriverMasteryAction(
   vehicle.lastActionPoints = totalPts;
   vehicle.lastActionTimer = 2.1;
   return totalPts;
+}
+
+/**
+ * Pure, deterministic camera kinematics evaluator for the 'drift' camera mode.
+ * Dynamically pans (rotates orbital yaw and shifts laterally toward the outside of the slide
+ * while looking ahead along the velocity vector into the corner apex) and tilts (banks horizon
+ * roll and adjusts pitch & FOV) proportional to the car's slip angle and forward velocity.
+ */
+export function evaluateDriftCameraKinematics(
+  vehicle: Pick<
+    VehiclePhysicsState,
+    | 'slipAngleRad'
+    | 'speedMs'
+    | 'angularVelocity'
+    | 'rollRad'
+    | 'pitchRad'
+    | 'isDrifting'
+    | 'isBoosting'
+  > & { steerAngle?: number },
+  maxSpeedMs = 80
+): DriftCameraKinematics {
+  const safeMaxSpeed = Math.max(25, maxSpeedMs);
+  const speedRatio = clamp(vehicle.speedMs / safeMaxSpeed, 0, 1.25);
+  const highSpeedFactor = clamp((vehicle.speedMs - 5) / 36, 0, 1.2);
+  const slipRad = clamp(vehicle.slipAngleRad, -0.95, 0.95);
+  const steerRad = clamp(vehicle.steerAngle ?? 0, -0.55, 0.55);
+  const absSlip = Math.abs(slipRad);
+  const driftAngleDeg = Number((absSlip * (180 / Math.PI)).toFixed(1));
+
+  // Normalized drift & cornering intensity (0..1) combining slip angle, yaw rate, and cornering velocity
+  const rawSlipNorm = clamp(
+    (absSlip - 0.035) / 0.38 + Math.abs(vehicle.angularVelocity) * 0.16,
+    0,
+    1
+  );
+  const driftIntensity = Number(
+    clamp(rawSlipNorm * clamp(vehicle.speedMs / 14, 0, 1.15), 0, 1).toFixed(3)
+  );
+
+  // Dynamic Panning:
+  // Rotate camera sightline toward the actual velocity vector / apex so high-speed slides frame
+  // both the broadside angle of the vintage GT chassis and the upcoming corner exit.
+  const panYawRad = Number(
+    clamp(
+      slipRad * (0.82 + 0.34 * highSpeedFactor) -
+        vehicle.angularVelocity * 0.16 +
+        steerRad * 0.18 * highSpeedFactor,
+      -0.88,
+      0.88
+    ).toFixed(4)
+  );
+
+  // Swing camera laterally to the outside of the corner to showcase smoking rear tires & counter-steer
+  const lateralOffsetM = Number(
+    clamp(
+      Math.sin(slipRad) * (2.75 + 1.35 * highSpeedFactor) -
+        vehicle.angularVelocity * 0.52 +
+        steerRad * 0.45 * highSpeedFactor,
+      -4.1,
+      4.1
+    ).toFixed(3)
+  );
+
+  // Pan look-at target into the corner apex along the slip trajectory
+  const lookLateralM = Number(
+    clamp(
+      Math.sin(slipRad) * (4.55 + 2.85 * highSpeedFactor) +
+        vehicle.angularVelocity * 0.62 -
+        steerRad * 0.85 * highSpeedFactor,
+      -7.2,
+      7.2
+    ).toFixed(3)
+  );
+
+  // Dynamic Tilting (Horizon Bank Roll & High-Speed Cornering Pitch):
+  // Tilts into the cornering G-load & slip angle with velocity scaling
+  const tiltRollRad = Number(
+    clamp(
+      -slipRad * (0.21 + 0.16 * highSpeedFactor) -
+        vehicle.angularVelocity * 0.038 -
+        steerRad * 0.06 * highSpeedFactor -
+        vehicle.rollRad * 0.68,
+      -0.36,
+      0.36
+    ).toFixed(4)
+  );
+
+  const pitchOffsetRad = Number(
+    clamp(
+      -0.035 * highSpeedFactor - absSlip * 0.062 + vehicle.pitchRad * 0.5,
+      -0.18,
+      0.14
+    ).toFixed(4)
+  );
+
+  const followDistanceM = Number(
+    (5.55 - driftIntensity * 0.72 + speedRatio * 0.42).toFixed(3)
+  );
+  const heightOffsetM = Number(
+    (1.75 - driftIntensity * 0.28 + speedRatio * 0.12).toFixed(3)
+  );
+  const lookAheadDistanceM = Number(
+    (8.6 + speedRatio * 4.4 - driftIntensity * 1.15).toFixed(3)
+  );
+  const fovDeg = Number(
+    (
+      60.5 +
+      speedRatio * 10.5 +
+      driftIntensity * 6.2 +
+      (vehicle.isBoosting ? 5.5 : 0)
+    ).toFixed(2)
+  );
+
+  return {
+    panYawRad,
+    lateralOffsetM,
+    followDistanceM,
+    heightOffsetM,
+    lookAheadDistanceM,
+    lookLateralM,
+    tiltRollRad,
+    pitchOffsetRad,
+    fovDeg,
+    driftAngleDeg,
+    driftIntensity,
+  };
 }
 
 export const TIRE_COMPOUND_SPECS: Record<
@@ -1084,6 +1214,10 @@ export function createInitialVehicleState(params: {
     onKerb: false,
     kerbVibration: 0,
     isDrifting: false,
+    driftAngleDeg: 0,
+    driftDurationSec: 0,
+    lastDriftDir: 0,
+    lastDriftMilestone: 0,
     isOffTrack: false,
     isDrafting: false,
     hitFlashTimer: 0,
@@ -1288,9 +1422,9 @@ export function stepVehiclePhysics(
     aquaSteerPenalty *
     frontTurnInFactor;
 
-  // Intuitive Caster Counter-Steer & Slip-Angle Catch Assist (opposes excessive slip angle to prevent spinouts)
-  const assistGain = isAssisted ? 0.52 : 0.30;
-  const maxAssistRad = isAssisted ? 0.26 : 0.16;
+  // Intuitive Caster Counter-Steer & Slip-Angle Catch Assist (helps hold smooth, heroic drifts without spinning out)
+  const assistGain = isAssisted ? 0.56 : 0.36;
+  const maxAssistRad = isAssisted ? 0.29 : 0.20;
   const driftAssistSteer =
     vehicle.isPlayer && Math.abs(vehicle.slipAngleRad) > 0.045 && !vehicle.handbrake
       ? clamp(vehicle.slipAngleRad * assistGain, -maxAssistRad, maxAssistRad)
@@ -1545,7 +1679,21 @@ export function stepVehiclePhysics(
   }
 
   if (vehicle.handbrake && Math.abs(forwardVel) > 0.5) {
-    driveForce -= Math.sign(forwardVel) * stats.brakeForceN * 0.52;
+    // Low longitudinal drag on handbrake tap so initiating a high-speed drift preserves corner entry momentum
+    driveForce -= Math.sign(forwardVel) * stats.brakeForceN * 0.24;
+  }
+
+  // Drift Vector Forward Thrust: holding throttle during a controlled slide channels rear-wheel power into cornering momentum
+  const currentAbsSlip = Math.abs(vehicle.slipAngleRad);
+  if (
+    forwardVel > 8 &&
+    vehicle.throttle > 0.25 &&
+    currentAbsSlip > 0.10 &&
+    currentAbsSlip < 0.78 &&
+    !vehicle.handbrake
+  ) {
+    const sweetSpotBoost = Math.sin(clamp((currentAbsSlip - 0.08) / 0.55, 0, 1) * Math.PI);
+    driveForce += stats.engineForceN * vehicle.throttle * (0.24 + 0.18 * sweetSpotBoost);
   }
 
   const aeroDrag =
@@ -1579,13 +1727,13 @@ export function stepVehiclePhysics(
     (vehicle.isBoosting ? 1.12 : 1.0);
   forwardVel = clamp(forwardVel, -15, maxAllowedSpeed);
 
-  // Cornering Yaw Rate, Traction Control & Tire Wear Oversteer Balance
+  // Cornering Yaw Rate, Fun Drift Initiation, Sweet-Spot Stabilization & Counter-Steer Authority
   const minSteerSpeed = Math.min(1.0, Math.abs(forwardVel) / 2.4);
   const directionSign = forwardVel >= -0.2 ? 1 : -1;
-  const handbrakeOversteer = vehicle.handbrake ? 1.75 : 1.0;
+  const handbrakeOversteer = vehicle.handbrake ? 1.88 : 1.0;
   const trailBrakeRotation =
     vehicle.brake > 0.12 && Math.abs(vehicle.steerAngle) > 0.03
-      ? 1.0 + Math.min(0.20, vehicle.brake * 0.22)
+      ? 1.0 + Math.min(0.24, vehicle.brake * 0.26)
       : 1.0;
 
   // Worn rear tires induce progressive power oversteer (attenuated by Traction Control in pro_assisted mode)
@@ -1597,14 +1745,21 @@ export function stepVehiclePhysics(
     (1.0 - effectiveWeatherGrip) * (isAssisted ? 0.26 : 0.48) +
     (vehicle.onMarbles ? 0.16 : 0) +
     rearWearOversteer;
-  const throttleOversteer =
-    1 +
-    vehicle.throttle *
-      (stats.oversteerBias - 1.0) *
-      (isAssisted ? 0.24 : 0.40) *
-      wetOversteerMod;
 
-  const targetAngularVel =
+  // Power-Oversteer Drift Kick when steering hard under throttle at cornering speed
+  const powerSlideKick =
+    vehicle.throttle > 0.65 && Math.abs(rawSteer) > 0.45 && Math.abs(forwardVel) > 12
+      ? 1.18
+      : 1.0;
+  const throttleOversteer =
+    (1 +
+      vehicle.throttle *
+        Math.max(0.08, stats.oversteerBias - 0.94) *
+        (isAssisted ? 0.32 : 0.46) *
+        wetOversteerMod) *
+    powerSlideKick;
+
+  let targetAngularVel =
     vehicle.steerAngle *
     stats.turnInRate *
     minSteerSpeed *
@@ -1614,34 +1769,62 @@ export function stepVehiclePhysics(
     throttleOversteer *
     (0.76 + 0.24 * surfaceGrip);
 
-  if (vehicle.handbrake && Math.abs(forwardVel) > 7 && Math.abs(vehicle.steerAngle) > 0.04) {
-    vehicle.angularVelocity += Math.sign(vehicle.steerAngle) * 3.2 * dt;
+  if (vehicle.handbrake && Math.abs(forwardVel) > 6 && Math.abs(vehicle.steerAngle) > 0.035) {
+    vehicle.angularVelocity += Math.sign(vehicle.steerAngle) * 3.65 * dt;
+  }
+
+  // Drift Sweet-Spot Governor: prevents snap spin-outs when slip angle exceeds ~26 deg (0.45 rad)
+  // and helps the driver lock into smooth, sustained broadside drifts around sweeping corners
+  const preAbsSlip = Math.abs(vehicle.slipAngleRad);
+  if (preAbsSlip > 0.16 && Math.abs(forwardVel) > 7) {
+    const excessSlip = Math.max(0, preAbsSlip - (isAssisted ? 0.36 : 0.44));
+    if (excessSlip > 0) {
+      const stabilizingYawRate = Math.sign(vehicle.slipAngleRad) * excessSlip * (isAssisted ? 3.8 : 2.6);
+      targetAngularVel += stabilizingYawRate;
+    }
   }
 
   const isCounterSteering =
-    vehicle.slipAngleRad * vehicle.steerAngle < -0.01 && Math.abs(vehicle.slipAngleRad) > 0.07;
-  // Strong yaw stability damping during normal driving; relaxed briefly during collision shock so physical impacts rotate the chassis naturally
-  const baseYawDamping = isCounterSteering ? 32 : Math.abs(rawSteer) < 0.05 ? 24 : isAssisted ? 19 : 15;
+    vehicle.slipAngleRad * vehicle.steerAngle < -0.01 && Math.abs(vehicle.slipAngleRad) > 0.06;
+  // Strong yaw stability damping during counter-steering so catching a slide is crisp and immediate
+  const baseYawDamping = isCounterSteering ? 36 : Math.abs(rawSteer) < 0.05 ? 25 : isAssisted ? 20 : 16;
   const yawDamping = baseYawDamping * (1 - collisionShockRatio * 0.72);
   vehicle.angularVelocity +=
     (targetAngularVel - vehicle.angularVelocity) * Math.min(1, dt * yawDamping);
   vehicle.yaw = normalizeAngle(vehicle.yaw + vehicle.angularVelocity * dt);
 
-  // Lateral slip & Pacejka-inspired tire cornering stiffness
+  // Lateral slip & Pacejka-inspired tire cornering stiffness with progressive drift sweet-spot
+  const powerSlideLateralImpulse =
+    vehicle.throttle > 0.7 && Math.abs(rawSteer) > 0.5 && Math.abs(forwardVel) > 14
+      ? 1.24
+      : 1.0;
   const centrifugalLateral =
     -vehicle.angularVelocity *
     forwardVel *
-    (isAssisted ? 0.20 : 0.25) *
+    (isAssisted ? 0.22 : 0.26) *
     stats.oversteerBias *
-    (vehicle.handbrake ? 2.05 : 1.0);
-  lateralVel += centrifugalLateral * dt * 3.6;
+    powerSlideLateralImpulse *
+    (vehicle.handbrake ? 2.15 : 1.0);
+  lateralVel += centrifugalLateral * dt * 3.75;
 
   const absSlip = Math.abs(vehicle.slipAngleRad);
-  const pacejkaGripFactor =
-    absSlip < 0.18
-      ? 1.10
-      : Math.max(isAssisted ? 0.85 : 0.75, 1.10 - (absSlip - 0.18) * (isAssisted ? 0.44 : 0.65));
-  const handbrakeLateralGrip = vehicle.handbrake ? 0.26 : pacejkaGripFactor;
+  // Progressive lateral grip curve with Power-Oversteer Dynamic Friction:
+  // When sliding (> 0.085 rad) with throttle applied, spinning rear tires stay in dynamic sliding friction
+  // (0.42..0.58) so the driver can hold long, controllable power-slides through sweeping corners!
+  const isPowerSliding =
+    (absSlip > 0.085 || vehicle.isDrifting) &&
+    vehicle.throttle > 0.25 &&
+    Math.abs(forwardVel) > 9;
+  const pacejkaGripFactor = isPowerSliding
+    ? absSlip < 0.42
+      ? 0.42
+      : Math.min(0.95, 0.42 + (absSlip - 0.42) * (isAssisted ? 1.25 : 0.95))
+    : absSlip < 0.15
+    ? 1.08
+    : absSlip < 0.46
+    ? 0.78
+    : Math.min(1.18, 0.78 + (absSlip - 0.46) * (isAssisted ? 1.15 : 0.85));
+  const handbrakeLateralGrip = vehicle.handbrake ? 0.24 : pacejkaGripFactor;
   const lateralGripDamping =
     stats.cornerStiffness * surfaceGrip * handbrakeLateralGrip * (1 - collisionShockRatio * 0.58);
   lateralVel *= Math.exp(-lateralGripDamping * dt);
@@ -1667,10 +1850,11 @@ export function stepVehiclePhysics(
   }
 
   vehicle.slipAngleRad = Math.atan2(lateralVel, Math.max(2.5, Math.abs(forwardVel)));
+  vehicle.driftAngleDeg = Number((Math.abs(vehicle.slipAngleRad) * (180 / Math.PI)).toFixed(1));
   vehicle.isDrifting =
-    vehicle.speedMs > 10 &&
-    (Math.abs(vehicle.slipAngleRad) > 0.12 ||
-      (vehicle.handbrake && Math.abs(vehicle.steerAngle) > 0.05));
+    vehicle.speedMs > 9.5 &&
+    (Math.abs(vehicle.slipAngleRad) > 0.095 ||
+      (vehicle.handbrake && Math.abs(vehicle.steerAngle) > 0.04));
 
   const hardBraking = vehicle.brake > 0.55 && vehicle.speedMs > 6;
   const launchWheelspin =
@@ -1679,7 +1863,7 @@ export function stepVehiclePhysics(
     hardBraking ||
     launchWheelspin ||
     (vehicle.handbrake && vehicle.speedMs > 3.5) ||
-    (vehicle.isDrifting && Math.abs(vehicle.slipAngleRad) > 0.13);
+    (vehicle.isDrifting && Math.abs(vehicle.slipAngleRad) > 0.11);
   const slipIntensity = clamp(
     Math.abs(vehicle.slipAngleRad) * 2.8 +
       (vehicle.handbrake ? 0.65 : 0) +
@@ -1918,14 +2102,61 @@ export function stepVehiclePhysics(
     }
   }
 
-  // Continuous style mastery accumulation for high-speed four-wheel drifts & slipstream drafting
-  if (vehicle.isPlayer && !vehicle.isOffTrack) {
-    if (vehicle.isDrifting && vehicle.speedMs > 16) {
-      vehicle.styleScore = (vehicle.styleScore ?? 0) + Math.round(vehicle.speedMs * dt * 2.2);
-      vehicle.comboTimer = Math.max(vehicle.comboTimer ?? 0, 2.5);
-    } else if (vehicle.isDrafting && vehicle.speedMs > 28) {
-      vehicle.styleScore = (vehicle.styleScore ?? 0) + Math.round(vehicle.speedMs * dt * 1.4);
-      vehicle.comboTimer = Math.max(vehicle.comboTimer ?? 0, 2.0);
+  // Continuous style mastery accumulation, nitro recharge, and tiered drift combo milestones
+  if (vehicle.isPlayer) {
+    if (vehicle.isDrifting && vehicle.speedMs > 11) {
+      const prevDur = vehicle.driftDurationSec ?? 0;
+      const nextDur = prevDur + dt;
+      vehicle.driftDurationSec = nextDur;
+
+      const currDir = Math.sign(vehicle.slipAngleRad);
+      const prevDir = vehicle.lastDriftDir ?? 0;
+      if (
+        prevDir !== 0 &&
+        currDir !== 0 &&
+        currDir !== prevDir &&
+        (vehicle.comboTimer ?? 0) > 0.5 &&
+        Math.abs(vehicle.slipAngleRad) > 0.16
+      ) {
+        awardDriverMasteryAction(vehicle, 'WHIPLASH DRIFT LINK', 220);
+        vehicle.lastDriftMilestone = 0;
+      }
+      if (currDir !== 0) {
+        vehicle.lastDriftDir = currDir;
+      }
+
+      const milestone = vehicle.lastDriftMilestone ?? 0;
+      if (nextDur >= 0.65 && milestone < 1) {
+        vehicle.lastDriftMilestone = 1;
+        awardDriverMasteryAction(vehicle, 'APEX POWER SLIDE', 160);
+      } else if (nextDur >= 1.65 && milestone < 2) {
+        vehicle.lastDriftMilestone = 2;
+        awardDriverMasteryAction(vehicle, 'HEROIC FOUR-WHEEL DRIFT', 320);
+      } else if (nextDur >= 2.85 && milestone < 3) {
+        vehicle.lastDriftMilestone = 3;
+        awardDriverMasteryAction(vehicle, 'LEGENDARY DORIFTO', 550);
+      }
+
+      const angleBonus = 1 + Math.min(1.5, Math.abs(vehicle.slipAngleRad) * 2.4);
+      vehicle.styleScore =
+        (vehicle.styleScore ?? 0) + Math.round(vehicle.speedMs * dt * 2.8 * angleBonus);
+      vehicle.comboTimer = Math.max(vehicle.comboTimer ?? 0, 3.2);
+      if (!vehicle.isBoosting) {
+        vehicle.nitroCharge = clamp(
+          (vehicle.nitroCharge ?? 0) + dt * (6.5 + Math.abs(vehicle.slipAngleRad) * 16),
+          0,
+          100
+        );
+      }
+    } else {
+      vehicle.driftDurationSec = Math.max(0, (vehicle.driftDurationSec ?? 0) - dt * 1.5);
+      if ((vehicle.driftDurationSec ?? 0) === 0) {
+        vehicle.lastDriftMilestone = 0;
+      }
+      if (vehicle.isDrafting && !vehicle.isOffTrack && vehicle.speedMs > 28) {
+        vehicle.styleScore = (vehicle.styleScore ?? 0) + Math.round(vehicle.speedMs * dt * 1.4);
+        vehicle.comboTimer = Math.max(vehicle.comboTimer ?? 0, 2.0);
+      }
     }
   }
 
@@ -2100,6 +2331,7 @@ const VEHICLE_MASS_BY_SPEC: Record<string, number> = {
   coventry_etype_lw: 945,
   stuttgart_911s_rs: 830,
   dearborn_gt40_mk2: 1080,
+  scuderia_f1_68: 540,
 };
 
 /**
@@ -2576,4 +2808,216 @@ export function stepBreakableProps(
 
   return brokenEvents;
 }
+
+/**
+ * Computes a closed-loop physics-based ideal speed & braking/acceleration zone profile
+ * along the track's optimal racing line (`s.racingLineOffset`) for a given car & surface grip.
+ *
+ * Uses a 3-stage solver:
+ * 1. Cornering speed limit at each sample from local curvature, banking, lateral grip G, and aero downforce.
+ * 2. Two-pass backward integration around the closed circuit enforcing maximum braking deceleration (`v_i^2 <= v_{i+1}^2 + 2 * a_brake * ds`).
+ * 3. Two-pass forward integration enforcing longitudinal acceleration (`v_i^2 <= v_{i-1}^2 + 2 * a_accel * ds`) and classifying each segment into `'brake'`, `'coast'`, or `'accelerate'`.
+ */
+export function computeRacingLineProfile(
+  track: TrackSpec,
+  stats: EffectiveCarStats,
+  surfaceGrip = 1.0
+): RacingLinePointProfile[] {
+  const samples = track.samples;
+  const n = samples.length;
+  if (n === 0) return [];
+
+  const ds = Math.max(1.0, track.totalLengthM / n);
+  const g = 9.81;
+  const effectiveGrip = clamp(surfaceGrip * track.surfaceGrip, 0.55, 1.35);
+  const maxSpeed = stats.maxSpeedMs;
+
+  // Smoothed effective curvature at each sample (blending immediate & short lookahead to avoid noise spikes)
+  const cornerMaxSpeed = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const s0 = samples[i];
+    const sPrev = samples[(i - 2 + n) % n];
+    const sNext = samples[(i + 2) % n];
+    const sFar = samples[(i + 5) % n];
+
+    const avgCurv =
+      Math.abs(s0.curvature) * 0.48 +
+      Math.abs(sPrev.curvature) * 0.16 +
+      Math.abs(sNext.curvature) * 0.24 +
+      Math.abs(sFar.curvature) * 0.12;
+
+    if (avgCurv < 0.0016) {
+      cornerMaxSpeed[i] = maxSpeed;
+    } else {
+      // Racing line widens effective corner radius slightly compared to raw centerline
+      const effectiveRadius = 1 / Math.max(0.0016, avgCurv * 0.86);
+      const bankAssistG = Math.abs(Math.sin(s0.bankingRad)) * 0.45;
+      const aeroBonusG = (stats.downforceFactor / Math.max(500, stats.weightKg)) * 0.35;
+      const latAccelMs2 =
+        (stats.lateralGripG + bankAssistG + aeroBonusG) * g * effectiveGrip * 1.04;
+      const vApex = Math.sqrt(Math.max(100, latAccelMs2 * effectiveRadius));
+      cornerMaxSpeed[i] = clamp(vApex, 16, maxSpeed);
+    }
+  }
+
+  const idealSpeed = new Float32Array(cornerMaxSpeed);
+  const maxBrakeDecel = stats.brakingG * g * effectiveGrip * 0.94;
+  const maxForwardAccel =
+    ((stats.engineForceN / Math.max(450, stats.weightKg)) * 0.62) * effectiveGrip;
+
+  // Backward pass (2 full laps for wrap-around convergence): v_i <= sqrt(v_{i+1}^2 + 2 * a_brake * ds)
+  for (let pass = 0; pass < 2; pass++) {
+    for (let step = n - 1; step >= 0; step--) {
+      const nextIdx = (step + 1) % n;
+      const vNext = idealSpeed[nextIdx];
+      const maxEntryV = Math.sqrt(vNext * vNext + 2 * maxBrakeDecel * ds);
+      if (maxEntryV < idealSpeed[step]) {
+        idealSpeed[step] = maxEntryV;
+      }
+    }
+  }
+
+  // Forward pass (2 full laps for wrap-around convergence): v_i <= sqrt(v_{i-1}^2 + 2 * a_accel * ds)
+  for (let pass = 0; pass < 2; pass++) {
+    for (let step = 0; step < n; step++) {
+      const prevIdx = (step - 1 + n) % n;
+      const vPrev = idealSpeed[prevIdx];
+      const maxExitV = Math.min(maxSpeed, Math.sqrt(vPrev * vPrev + 2 * maxForwardAccel * ds));
+      if (maxExitV < idealSpeed[step]) {
+        idealSpeed[step] = maxExitV;
+      }
+    }
+  }
+
+  const profile: RacingLinePointProfile[] = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const nextIdx = (i + 3) % n;
+    const vCurr = idealSpeed[i];
+    const vAhead = idealSpeed[nextIdx];
+    // Longitudinal acceleration rate over 3*ds lookahead
+    const longAccelRate = (vAhead * vAhead - vCurr * vCurr) / (2 * (3 * ds));
+    const curv = Math.abs(samples[i].curvature);
+
+    let zone: RacingLineZone = 'accelerate';
+    let brakingIntensity = 0;
+
+    if (longAccelRate < -1.85) {
+      zone = 'brake';
+      brakingIntensity = clamp(-longAccelRate / Math.max(4.0, maxBrakeDecel * 0.85), 0.15, 1.0);
+    } else if (
+      longAccelRate < 0.75 &&
+      (curv > 0.0042 || vCurr < maxSpeed * 0.82)
+    ) {
+      zone = 'coast';
+      brakingIntensity = clamp((0.75 - longAccelRate) / 2.6, 0.05, 0.45);
+    } else {
+      zone = 'accelerate';
+      brakingIntensity = 0;
+    }
+
+    profile[i] = {
+      index: i,
+      s: samples[i].s,
+      idealSpeedMs: Number(vCurr.toFixed(2)),
+      zone,
+      brakingIntensity: Number(brakingIntensity.toFixed(3)),
+    };
+  }
+
+  return profile;
+}
+
+/**
+ * Evaluates the live RGB color, alpha opacity, and animated chevron intensity for a single
+ * track sample on the 3D dynamic racing line overlay based on:
+ * - The segment's precomputed ideal zone (`accelerate` = emerald green, `coast` = amber gold, `brake` = crimson red)
+ * - The player's live distance ahead along the circuit (`0..115` samples forward sightline)
+ * - The player's live speed relative to `profilePt.idealSpeedMs` (entering a corner faster than target speed dynamically flares the upcoming racing line bright crimson-red to warn the driver to brake!).
+ */
+export function evaluateRacingLineSegmentVisual(
+  profilePt: RacingLinePointProfile,
+  playerSampleIndex: number,
+  playerSpeedMs: number,
+  totalSamples: number,
+  pulsePhase = 0
+): RacingLineSegmentVisual {
+  const n = Math.max(1, totalSamples);
+  const forwardSteps = (profilePt.index - playerSampleIndex + n) % n;
+  const backwardSteps = (playerSampleIndex - profilePt.index + n) % n;
+
+  // Base zone colors:
+  // Accelerate: vivid emerald-cyan (#10b981 -> RGB 0.06, 0.86, 0.50)
+  // Coast / Turn-in Apex: warm amber-gold (#f59e0b -> RGB 0.98, 0.70, 0.08)
+  // Brake: high-visibility motorsport crimson (#ef4444 -> RGB 0.98, 0.15, 0.18)
+  let r = 0.06;
+  let g = 0.86;
+  let b = 0.50;
+  let effectiveZone: RacingLineZone = profilePt.zone;
+
+  if (profilePt.zone === 'brake') {
+    const intensity = clamp(profilePt.brakingIntensity, 0.2, 1.0);
+    r = 0.98;
+    g = clamp(0.32 - intensity * 0.20, 0.10, 0.32);
+    b = clamp(0.18 - intensity * 0.08, 0.08, 0.18);
+  } else if (profilePt.zone === 'coast') {
+    r = 0.98;
+    g = 0.70;
+    b = 0.08;
+  }
+
+  // Dynamic Live Speed Comparison in the player's forward braking horizon (0..85 samples ahead):
+  // If the player is approaching a segment faster than its ideal speed, shift color toward Coast/Brake!
+  if (forwardSteps <= 85 && playerSpeedMs > 8) {
+    const horizonWeight = 1 - (forwardSteps / 85) * 0.45;
+    const speedDeltaMs = (playerSpeedMs - profilePt.idealSpeedMs) * horizonWeight;
+
+    if (speedDeltaMs > 4.2) {
+      // Overspeeding into upcoming zone -> flare bright crimson brake warning
+      const flare = clamp((speedDeltaMs - 4.2) / 12.0, 0.25, 1.0);
+      r = r + (1.0 - r) * flare;
+      g = g * (1 - flare * 0.82);
+      b = b * (1 - flare * 0.80);
+      effectiveZone = 'brake';
+    } else if (speedDeltaMs > 1.2 && effectiveZone === 'accelerate') {
+      // Slightly above target speed -> shift from emerald toward amber lift/coast
+      const warn = clamp((speedDeltaMs - 1.2) / 3.0, 0, 1);
+      r = r + (0.98 - r) * warn;
+      g = g + (0.70 - g) * warn;
+      b = b + (0.08 - b) * warn;
+      if (warn > 0.45) effectiveZone = 'coast';
+    } else if (speedDeltaMs < -4.5 && effectiveZone === 'brake') {
+      // Already slowed well below corner entry speed -> transition braking zone to amber/green so driver knows they can release brakes
+      const relief = clamp((-speedDeltaMs - 4.5) / 8.0, 0, 1);
+      r = r + (0.12 - r) * (relief * 0.65);
+      g = g + (0.82 - g) * relief;
+      b = b + (0.38 - b) * (relief * 0.65);
+      if (relief > 0.55) effectiveZone = 'coast';
+    }
+  }
+
+  // Forward sightline alpha envelope: brightest 4..95 samples ahead of the car, with a subtle baseline around the circuit
+  let sightlineAlpha = 0.34;
+  if (forwardSteps <= 115) {
+    const fadeOut = 1 - Math.pow(forwardSteps / 115, 1.45);
+    sightlineAlpha = 0.34 + fadeOut * 0.58;
+  } else if (backwardSteps <= 12) {
+    const behindFade = 1 - backwardSteps / 12;
+    sightlineAlpha = 0.34 + behindFade * 0.35;
+  }
+
+  // Travelling wave pulse along the racing line in the direction of travel
+  const wave = 0.5 + 0.5 * Math.sin(profilePt.index * 0.32 - pulsePhase * 6.0);
+  const chevronBoost = Number((0.82 + wave * 0.28).toFixed(3));
+  const finalAlpha = clamp(sightlineAlpha * (0.90 + wave * 0.10), 0.22, 0.96);
+
+  return {
+    zone: effectiveZone,
+    r: Number(clamp(r * chevronBoost, 0, 1).toFixed(3)),
+    g: Number(clamp(g * chevronBoost, 0, 1).toFixed(3)),
+    b: Number(clamp(b * chevronBoost, 0, 1).toFixed(3)),
+    alpha: Number(finalAlpha.toFixed(3)),
+    chevronBoost,
+  };
+}
+
 

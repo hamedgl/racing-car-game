@@ -664,3 +664,99 @@ export function findClosestTrackSample(
     rz,
   };
 }
+
+/**
+ * Globally verifies that a world position (wx, wz) is strictly outside the road surface,
+ * rumble kerbs, and Armco guardrail corridor of EVERY segment on the circuit.
+ * Prevents trees, rocks, and buildings from ever spawning on the road or across switchback hairpins.
+ */
+export function isWorldPointClearOfTrack(
+  track: TrackSpec,
+  wx: number,
+  wz: number,
+  minExtraMarginM = 6.5
+): {
+  clear: boolean;
+  minDistanceM: number;
+  closestSampleIndex: number;
+  surfaceY: number;
+} {
+  const samples = track.samples;
+  const n = samples.length;
+  let clear = true;
+  let minDistanceM = Infinity;
+  let closestSampleIndex = 0;
+  let bestSurfaceY = 0;
+
+  for (let i = 0; i < n; i++) {
+    const sA = samples[i];
+    const sB = samples[(i + 1) % n];
+    const segDx = sB.x - sA.x;
+    const segDz = sB.z - sA.z;
+    const segLenSq = segDx * segDx + segDz * segDz || 1;
+    const t = Math.max(0, Math.min(1, ((wx - sA.x) * segDx + (wz - sA.z) * segDz) / segLenSq));
+    const px = sA.x + segDx * t;
+    const pz = sA.z + segDz * t;
+    const py = sA.y + (sB.y - sA.y) * t;
+    const dist = Math.hypot(wx - px, wz - pz);
+    const halfW = (sA.width + (sB.width - sA.width) * t) * 0.5;
+    const requiredClearance = halfW + 2.2 + minExtraMarginM;
+
+    if (dist < requiredClearance) {
+      clear = false;
+    }
+    if (dist < minDistanceM) {
+      minDistanceM = dist;
+      closestSampleIndex = i;
+      bestSurfaceY = py;
+    }
+  }
+
+  return {
+    clear,
+    minDistanceM,
+    closestSampleIndex,
+    surfaceY: bestSurfaceY,
+  };
+}
+
+/**
+ * Checks proximity of (wx, wz) against all track segments OUTSIDE the local neighborhood
+ * of `localSampleIndex`, used to depress road shoulder verges when switchbacks or hairpins pass nearby.
+ */
+export function findNonLocalTrackProximity(
+  track: TrackSpec,
+  wx: number,
+  wz: number,
+  localSampleIndex: number,
+  ignoreWindow = 22
+): {
+  minDistM: number;
+  surfaceY: number;
+  halfWidth: number;
+} {
+  const samples = track.samples;
+  const n = samples.length;
+  let minDistM = Infinity;
+  let surfaceY = samples[localSampleIndex % n].y;
+  let halfWidth = samples[localSampleIndex % n].width * 0.5;
+
+  for (let i = 0; i < n; i++) {
+    const wrappedDiff = Math.min(
+      Math.abs(i - (localSampleIndex % n)),
+      n - Math.abs(i - (localSampleIndex % n))
+    );
+    if (wrappedDiff <= ignoreWindow) continue;
+
+    const s = samples[i];
+    const d = Math.hypot(wx - s.x, wz - s.z);
+    if (d < minDistM) {
+      minDistM = d;
+      surfaceY = s.y;
+      halfWidth = s.width * 0.5;
+    }
+  }
+
+  return { minDistM, surfaceY, halfWidth };
+}
+
