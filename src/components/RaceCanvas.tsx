@@ -5,11 +5,14 @@ import {
   CameraMode,
   CarLivery,
   ClassicCarSpec,
+  CockpitLightingState,
   ControlInput,
   DamageMode,
   EffectiveCarStats,
   GameState,
   HandlingMode,
+  PitStopAnimationState,
+  PitStopPhase,
   RemoteRacerTelemetry,
   TireCompound,
   TrackRubberPreset,
@@ -29,16 +32,23 @@ import {
   createInitialTrackRubberState,
   createInitialVehicleState,
   createInitialWeatherState,
+  evaluatePitStopAnimation,
   getSortedStandings,
+  PIT_STOP_DURATION_SEC,
   resolveMultiVehicleInteractions,
+  stepBreakableProps,
   stepVehiclePhysics,
   updateWeather,
 } from '../game/physics';
+import { evaluateCockpitLightingState } from '../game/cockpitLighting';
 import {
   buildClassicCarMesh,
+  buildPitCrewServiceRig,
   CarMeshRig,
   createLiveryCanvasTexture,
+  PitCrewServiceRig,
   updateCarWipers,
+  updatePitCrewServiceRig,
 } from '../game/carBuilder';
 import {
   buildTrackEnvironment,
@@ -77,10 +87,18 @@ export interface LiveHudSnapshot {
   lineGripModifier: number;
   verticalLoadG: number;
   asphaltGripFactor: number;
+  redlineTremor: number;
+  styleScore: number;
+  styleCombo: number;
+  lastActionBanner: string;
+  lastActionPoints: number;
+  lastActionTimer: number;
   handlingMode: HandlingMode;
   weather: WeatherState;
   damage: VehicleDamageState;
   tires: VehicleTireState;
+  pitStopAnim?: PitStopAnimationState;
+  cockpitLighting?: CockpitLightingState;
   standings: Array<{
     id: string;
     driverName: string;
@@ -323,9 +341,9 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.02;
-    renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 1.5));
     renderer.shadowMap.enabled = !isSoftwareGl;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
 
     const initialRect = container.getBoundingClientRect();
     renderer.setSize(initialRect.width || window.innerWidth, initialRect.height || window.innerHeight);
@@ -338,7 +356,7 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
     const camera = new THREE.PerspectiveCamera(
       62,
       (initialRect.width || window.innerWidth) / Math.max(1, initialRect.height || window.innerHeight),
-      0.2,
+      0.08,
       900
     );
 
@@ -355,8 +373,8 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
     dirLight.position.set(65, 110, 45);
     if (!isSoftwareGl) {
       dirLight.castShadow = true;
-      dirLight.shadow.mapSize.width = 2048;
-      dirLight.shadow.mapSize.height = 2048;
+      dirLight.shadow.mapSize.width = 1024;
+      dirLight.shadow.mapSize.height = 1024;
       const d = 80;
       dirLight.shadow.camera.left = -d;
       dirLight.shadow.camera.right = d;
@@ -385,6 +403,10 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
     const vehiclesGroup = new THREE.Group();
     scene.add(vehiclesGroup);
 
+    const pitCrewRig: PitCrewServiceRig = buildPitCrewServiceRig();
+    scene.add(pitCrewRig.root);
+    let lastPitPhase: PitStopPhase = 'idle';
+
     const remoteGhostsGroup = new THREE.Group();
     scene.add(remoteGhostsGroup);
     const remoteGhostMeshes = new Map<string, CarMeshRig>();
@@ -406,6 +428,9 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
     let titleOrbitAngle = 0.4;
     let lastHudEmitTime = 0;
     let lastBroadcastTime = 0;
+    let lastEnvVisualSyncTime = 0;
+    let lastLightTargetX = -9999;
+    let lastLightTargetZ = -9999;
 
     const buildTrack = (track: TrackSpec) => {
       if (trackEnvRig) {
@@ -459,6 +484,8 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
       aiEffectiveStats.clear();
       skidMarks.clear();
       driftScoreAccumulator = 0;
+      lastPitPhase = 'idle';
+      pitCrewRig.root.visible = false;
 
       currentRubberState = createInitialTrackRubberState(track.samples.length, rPreset);
       if (trackEnvRig) {
@@ -476,6 +503,24 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
         startingCompound: sCompound,
       });
       playerVehicle.tires.nextPitCompound = nCompound;
+
+      const stationParam = Number(new URLSearchParams(window.location.search).get('station'));
+      if (Number.isFinite(stationParam) && stationParam > 0 && track.samples.length > 0) {
+        const sIdx = Math.floor(stationParam) % track.samples.length;
+        const samp = track.samples[sIdx];
+        playerVehicle.x = samp.x;
+        playerVehicle.y = samp.y;
+        playerVehicle.z = samp.z;
+        playerVehicle.yaw = Math.atan2(samp.tx, samp.tz);
+        playerVehicle.trackSampleIndex = sIdx;
+        playerVehicle.lapProgress = sIdx / track.samples.length;
+        playerVehicle.totalRaceDistanceM = samp.distanceM;
+        playerVehicle.speedMs = 36;
+        playerVehicle.vx = samp.tx * 36;
+        playerVehicle.vz = samp.tz * 36;
+        playerVehicle.gear = 3;
+        playerVehicle.rpm = 5800;
+      }
 
       const playerRig = buildClassicCarMesh(pCar, pLivery, isSoftwareGl, maxAnisotropy);
       vehiclesGroup.add(playerRig.root);
@@ -693,9 +738,10 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
         } else {
           raceElapsedMs += dt * 1000;
 
-          // Update Dynamic Weather & Track Rubbering Visuals in real-time
+          // Update Dynamic Weather & throttle Track Environment shader/material sync to ~5Hz
           updateWeather(currentWeather, dt, raceElapsedMs);
-          if (trackEnvRig) {
+          if (trackEnvRig && now - lastEnvVisualSyncTime > 180) {
+            lastEnvVisualSyncTime = now;
             trackEnvRig.updateWeatherVisuals(currentWeather);
             trackEnvRig.updateTrackRubberVisuals(currentRubberState, currentWeather);
           }
@@ -719,8 +765,19 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
               keysHeld.has('KeyX') ||
               Boolean(tInput.nitro),
             pitRequest: keysHeld.has('KeyB') || Boolean(tInput.pitRequest) || activePitArmed,
+            shiftUp:
+              keysHeld.has('KeyE') ||
+              keysHeld.has('Period') ||
+              Boolean(tInput.shiftUp),
+            shiftDown:
+              keysHeld.has('KeyQ') ||
+              keysHeld.has('Comma') ||
+              Boolean(tInput.shiftDown),
             steerAxis: tInput.steerAxis,
           };
+          // Consume one-shot HUD shift button taps
+          if (tInput.shiftUp) tInput.shiftUp = false;
+          if (tInput.shiftDown) tInput.shiftDown = false;
 
           // Step Player Physics with Weather, Tire Wear/Heat/Integrity, Pit Service, Track Rubbering & Handling Mode
           const pEvents = stepVehiclePhysics(
@@ -737,6 +794,56 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
             stateRef.current.handlingMode
           );
           if (player.isOffTrack) cleanRaceFlag = false;
+
+          const playerPitAnim = evaluatePitStopAnimation(
+            player.tires.pitStopActive,
+            player.tires.pitStopTimer,
+            PIT_STOP_DURATION_SEC
+          );
+
+          if (player.tires.pitStopActive && activePitArmed) {
+            stateRef.current.onUpdatePitRequestArmed(false);
+          }
+
+          if (playerPitAnim.phase !== lastPitPhase) {
+            if (playerPitAnim.phase === 'jacking_up') {
+              racingAudio.playPitAirJack(true);
+            } else if (playerPitAnim.phase === 'wheels_off' || playerPitAnim.phase === 'torque_lock') {
+              racingAudio.playPitWheelGunBurst();
+            } else if (playerPitAnim.phase === 'dropping_go') {
+              racingAudio.playPitAirJack(false);
+            }
+            lastPitPhase = playerPitAnim.phase;
+          }
+
+          if (playerPitAnim.wrenchActive && Math.random() < 0.85) {
+            const pRig = carRigs.get('player');
+            const halfW = pRig ? pRig.trackHalfW + playerPitAnim.wheelLateralOffsetM : 0.85;
+            const fZ = pRig ? pRig.frontWheelbaseZ : 1.25;
+            const rZ = pRig ? pRig.rearWheelbaseZ : -1.22;
+            const fx = Math.sin(player.yaw);
+            const fz = Math.cos(player.yaw);
+            const rx = fz;
+            const rz = -fx;
+            for (const [lat, lon] of [
+              [-halfW, fZ],
+              [halfW, fZ],
+              [-halfW, rZ],
+              [halfW, rZ],
+            ]) {
+              particles.spawn(
+                player.x + rx * lat + fx * lon,
+                player.y + 0.34 + playerPitAnim.chassisLiftY,
+                player.z + rz * lat + fz * lon,
+                (Math.random() - 0.5) * 4.5,
+                1.0 + Math.random() * 2.6,
+                (Math.random() - 0.5) * 4.5,
+                Math.random() > 0.4 ? 0xfef08a : 0x38bdf8,
+                0.38,
+                0.22
+              );
+            }
+          }
 
           if (pEvents.pitStopCompleted) {
             stateRef.current.onUpdatePitRequestArmed(false);
@@ -956,6 +1063,58 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
             }
           }
 
+          // Step interactive breakable trackside props (hay bales, apex cones, chicane boards)
+          if (trackEnvRig && trackEnvRig.breakableProps.length > 0) {
+            const brokenEvents = stepBreakableProps(
+              trackEnvRig.breakableProps,
+              vehiclesState,
+              dt
+            );
+            let anyBrokenActive = brokenEvents.length > 0;
+            if (!anyBrokenActive) {
+              for (let bp = 0; bp < trackEnvRig.breakableProps.length; bp++) {
+                if (trackEnvRig.breakableProps[bp].broken) {
+                  anyBrokenActive = true;
+                  break;
+                }
+              }
+            }
+            if (anyBrokenActive) {
+              trackEnvRig.syncBreakablePropsVisuals();
+            }
+            for (const bEvt of brokenEvents) {
+              if (bEvt.vehicle.isPlayer) {
+                trauma = Math.min(1.0, trauma + 0.14);
+                racingAudio.playCollision(6.5);
+              }
+              const debrisColorA =
+                bEvt.type === 'hay_bale'
+                  ? 0xfacc15
+                  : bEvt.type === 'apex_cone'
+                  ? 0xf97316
+                  : 0xef4444;
+              const debrisColorB =
+                bEvt.type === 'hay_bale'
+                  ? 0xca8a04
+                  : bEvt.type === 'apex_cone'
+                  ? 0xf8fafc
+                  : 0xf8fafc;
+              for (let s = 0; s < 14; s++) {
+                particles.spawn(
+                  bEvt.x + (Math.random() - 0.5) * 0.65,
+                  bEvt.y + Math.random() * 0.45,
+                  bEvt.z + (Math.random() - 0.5) * 0.65,
+                  bEvt.vehicle.vx * 0.35 + (Math.random() - 0.5) * 9,
+                  2.4 + Math.random() * 5.8,
+                  bEvt.vehicle.vz * 0.35 + (Math.random() - 0.5) * 9,
+                  s % 2 === 0 ? debrisColorA : debrisColorB,
+                  0.68,
+                  0.52
+                );
+              }
+            }
+          }
+
           // Tire smoke, Off-line rubber marble pickup, Off-track dirt, and Wet Water Spray
           for (const v of vehiclesState) {
             const fx = Math.sin(v.yaw);
@@ -1059,6 +1218,33 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
           }
         }
 
+        // Evaluate real-time dynamic cockpit lighting for the player (responds to tree canopies, tunnels & weather)
+        const playerCockpitLighting = evaluateCockpitLightingState({
+          trackSampleIndex: player.trackSampleIndex,
+          totalSamples: track.samples.length,
+          distanceM: player.totalRaceDistanceM,
+          speedMs: player.speedMs,
+          timeSec: raceElapsedMs * 0.001,
+          weather: currentWeather,
+        });
+
+        // Modulate global scene environment & directional light intensity when in cockpit mode inside tunnels or tree shade
+        const targetEnvIntensity =
+          camMode === 'cockpit'
+            ? 0.18 + playerCockpitLighting.ambientFactor * 0.32 + playerCockpitLighting.tunnelSodiumPulse * 0.16
+            : 0.45;
+        scene.environmentIntensity = THREE.MathUtils.damp(
+          scene.environmentIntensity,
+          targetEnvIntensity,
+          14,
+          dt
+        );
+        const targetDirIntensity =
+          camMode === 'cockpit'
+            ? 0.45 + playerCockpitLighting.ambientFactor * 1.55 + playerCockpitLighting.dappledFlicker * 0.35
+            : 1.95;
+        dirLight.intensity = THREE.MathUtils.damp(dirLight.intensity, targetDirIntensity, 16, dt);
+
         // Update 3D Vehicle Meshes (Steering Wheel, Wipers, Glowing Brake Rotors, Tire Compound Ring, Lights)
         for (const v of vehiclesState) {
           const rig = carRigs.get(v.id);
@@ -1078,12 +1264,15 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
           // Turn cockpit steering wheel & driver's gloved hands with steering angle
           rig.steeringWheelPivot.rotation.z = -v.steerAngle * 1.75;
 
-          // Hide player's own helmet in first-person cockpit view so camera is never obstructed
+          // Hide player's own helmet and exterior tinted glass dome in first-person cockpit view
+          // so the driver has a completely unobstructed panoramic sightline to the 3D road ahead
           if (v.isPlayer) {
-            rig.helmetMesh.visible = camMode !== 'cockpit';
+            const isInFirstPersonCockpit = camMode === 'cockpit' && !v.tires.pitStopActive;
+            rig.helmetMesh.visible = !isInFirstPersonCockpit;
+            rig.cabinGroup.visible = !isInFirstPersonCockpit;
           }
 
-          // Animate working windshield wipers, 3D Veglia gauges, shift light, gated shifter, brake glow, and exhaust flames
+          // Animate working windshield wipers, 3D Veglia/Smiths/VDO gauges, shift light, gated shifter, footwell pedals, brake glow, exhaust flames & dynamic cockpit lighting
           updateCarWipers(
             rig,
             dt,
@@ -1093,7 +1282,11 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
             v.tires.compound,
             v.speedMs * 3.6,
             v.rpm,
-            v.gear
+            v.gear,
+            v.throttle,
+            v.brake,
+            v.redlineTremor ?? 0,
+            v.isPlayer ? playerCockpitLighting : undefined
           );
 
           const wheelSpinDelta = (v.speedMs * dt) / 0.345;
@@ -1111,6 +1304,23 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
             rig.brakeLightsMat.emissive.setHex(0x991b1b);
             rig.brakeLightsMat.emissiveIntensity = 0.35;
           }
+        }
+
+        // Update 3D Pit Crew Service Rig & 4-wheel removal/mounting animation for player vehicle
+        const playerRig = carRigs.get('player');
+        const activePitAnim = evaluatePitStopAnimation(
+          player.tires.pitStopActive,
+          player.tires.pitStopTimer,
+          PIT_STOP_DURATION_SEC
+        );
+        if (playerRig) {
+          updatePitCrewServiceRig(
+            pitCrewRig,
+            playerRig,
+            activePitAnim,
+            player.tires.compound,
+            player.tires.nextPitCompound
+          );
         }
 
         // Update Multiplayer Remote Ghost Cars
@@ -1140,7 +1350,7 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
             : camMode === 'chase_far'
             ? 56
             : camMode === 'cockpit'
-            ? 66
+            ? 68
             : camMode === 'bumper'
             ? 68
             : camMode === 'tv_side'
@@ -1148,13 +1358,43 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
             : 64;
         const fovDynamicDelta =
           camMode === 'cockpit'
-            ? speedNorm * 3.2 + (player.isBoosting ? 2.5 : 0)
+            ? speedNorm * 3.0 + (player.isBoosting ? 2.2 : 0)
             : speedNorm * 11 + (player.isDrafting ? 3.5 : 0) + (player.isBoosting ? 6.5 : 0);
-        const targetFov = baseFov + fovDynamicDelta;
-        camera.fov = THREE.MathUtils.damp(camera.fov, targetFov, 6, dt);
-        camera.updateProjectionMatrix();
+        const targetFov = player.tires.pitStopActive ? 48 : baseFov + fovDynamicDelta;
+        const nextFov = THREE.MathUtils.damp(
+          camera.fov,
+          targetFov,
+          player.tires.pitStopActive ? 10 : 6,
+          dt
+        );
+        if (Math.abs(nextFov - camera.fov) > 0.04) {
+          camera.fov = nextFov;
+          camera.updateProjectionMatrix();
+        }
 
-        if (camMode === 'chase' || camMode === 'chase_far') {
+        if (player.tires.pitStopActive) {
+          // Dramatic 3D Pit Lane Service broadcast camera framing the car on pneumatic jacks and the 6-member pit crew
+          const sweepZ = 3.35 - activePitAnim.progress * 1.45;
+          const sweepX = 2.95 + Math.sin(activePitAnim.progress * Math.PI) * 0.35;
+          _camTargetPos.set(
+            player.x + fx * sweepZ + rx * sweepX,
+            player.y + 1.38,
+            player.z + fz * sweepZ + rz * sweepX
+          );
+          _camLookAt.set(
+            player.x + fx * 0.08,
+            player.y + 0.44 + activePitAnim.chassisLiftY * 0.7,
+            player.z + fz * 0.08
+          );
+          if (camera.position.distanceTo(_camTargetPos) > 5.0) {
+            camera.position.copy(_camTargetPos);
+            _smoothLookAt.copy(_camLookAt);
+          } else {
+            camera.position.lerp(_camTargetPos, 1 - Math.exp(-12 * dt));
+            _smoothLookAt.lerp(_camLookAt, 1 - Math.exp(-16 * dt));
+          }
+          camera.lookAt(_smoothLookAt);
+        } else if (camMode === 'chase' || camMode === 'chase_far') {
           const distBack = camMode === 'chase_far' ? 8.6 : 6.1;
           const heightOffset = camMode === 'chase_far' ? 3.05 : 2.12;
           const lookAhead = camMode === 'chase_far' ? 10.5 : 8.2;
@@ -1189,22 +1429,24 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
           );
           camera.lookAt(_camLookAt);
         } else if (camMode === 'cockpit') {
-          // Mature first-person driver cockpit view: frames sculpted leather binnacle, working Veglia speedometer & tachometer,
-          // Nardi steering wheel with gloved hands, rearview mirror, and apex sightline over the hood.
-          // Note: local +X in carBuilder.ts is +rx in world space (left-hand driver seat at +0.19).
-          const baseEyeH = pCarSpec.bodyStyle === 'detroit_proto' ? 0.80 : 0.86;
-          const suspHeave = (player.suspensionOffsetM ?? 0) * 0.65;
-          const headLatSway = Math.max(-0.022, Math.min(0.022, -player.angularVelocity * 0.012));
+          // Unobstructed panoramic first-person driver cockpit view:
+          // Strictly aligned on the driver's column centerline (x = 0.190) at true driver eye height
+          // so the upper steering wheel window frames the Speedometer, Tachometer, and 3-stage shift lights with zero overlap!
+          const baseEyeH = pCarSpec.bodyStyle === 'detroit_proto' ? 0.752 : 0.812;
+          const suspHeave = (player.suspensionOffsetM ?? 0) * 0.55;
+          const headLatSway = Math.max(-0.020, Math.min(0.020, -player.angularVelocity * 0.010));
+          const longGShift = (player.brake - player.throttle) * 0.014;
           const eyeY = player.y + baseEyeH + suspHeave;
+          const driverLineX = 0.190 + headLatSway;
           camera.position.set(
-            player.x - fx * 0.34 + rx * (0.19 + headLatSway),
+            player.x - fx * (0.265 - longGShift) + rx * driverLineX,
             eyeY,
-            player.z - fz * 0.34 + rz * (0.19 + headLatSway)
+            player.z - fz * (0.265 - longGShift) + rz * driverLineX
           );
           _camLookAt.set(
-            player.x + fx * 12 + rx * 0.14,
-            eyeY - 0.32 - player.pitchRad * 6.5,
-            player.z + fz * 12 + rz * 0.14
+            player.x + fx * 18 + rx * (0.190 + headLatSway * 0.4),
+            eyeY - 0.18 - player.pitchRad * 6.0 - longGShift * 1.8,
+            player.z + fz * 18 + rz * (0.190 + headLatSway * 0.4)
           );
           camera.lookAt(_camLookAt);
         } else if (camMode === 'bumper') {
@@ -1237,10 +1479,23 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
           camera.position.x += (Math.random() - 0.5) * shakeAmt * 0.45;
           camera.position.y += (Math.random() - 0.5) * shakeAmt * 0.35;
         }
+        // Subtle high-frequency 3D engine harmonic camera micro-shake when hitting the redline before an upshift
+        const redlineTremor = player.redlineTremor ?? 0;
+        if (redlineTremor > 0.01 && !player.tires.pitStopActive) {
+          const engFreq = now * 0.095;
+          const camAmp = camMode === 'cockpit' ? 0.0042 : 0.014;
+          camera.position.x += Math.sin(engFreq) * redlineTremor * camAmp;
+          camera.position.y += Math.cos(engFreq * 1.37) * redlineTremor * camAmp * 0.85;
+          camera.rotation.z += Math.sin(engFreq * 0.83) * redlineTremor * 0.0032;
+        }
         camera.rotation.z += -player.rollRad * 0.45;
 
-        dirLight.position.set(player.x + 55, player.y + 95, player.z + 40);
-        dirLight.target.position.set(player.x, player.y, player.z);
+        if (Math.hypot(player.x - lastLightTargetX, player.z - lastLightTargetZ) > 2.5) {
+          lastLightTargetX = player.x;
+          lastLightTargetZ = player.z;
+          dirLight.position.set(player.x + 55, player.y + 95, player.z + 40);
+          dirLight.target.position.set(player.x, player.y, player.z);
+        }
 
         // Throttle React HUD state updates to ~10Hz
         if (now - lastHudEmitTime > 95) {
@@ -1273,6 +1528,12 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
             lineGripModifier: player.lineGripModifier,
             verticalLoadG: Number((player.verticalLoadG ?? 1.0).toFixed(2)),
             asphaltGripFactor: Number((player.asphaltGripFactor ?? 1.0).toFixed(2)),
+            redlineTremor: Number((player.redlineTremor ?? 0).toFixed(3)),
+            styleScore: Math.round(player.styleScore ?? 0) + driftScoreAccumulator,
+            styleCombo: player.styleCombo ?? 1,
+            lastActionBanner: player.lastActionBanner ?? '',
+            lastActionPoints: player.lastActionPoints ?? 0,
+            lastActionTimer: Number((player.lastActionTimer ?? 0).toFixed(2)),
             handlingMode: stateRef.current.handlingMode,
             weather: { ...currentWeather },
             damage: { ...player.damage },
@@ -1283,6 +1544,8 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
               rl: { ...player.tires.rl },
               rr: { ...player.tires.rr },
             },
+            pitStopAnim: activePitAnim,
+            cockpitLighting: playerCockpitLighting,
             standings: sorted.map((v, idx) => ({
               id: v.id,
               driverName: v.driverName,
@@ -1312,6 +1575,7 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
         }
       } else {
         racingAudio.silenceContinuous();
+        pitCrewRig.root.visible = false;
 
         if (player && currentGameState === 'title') {
           titleOrbitAngle += dt * (garageOpen ? 0.35 : 0.18);

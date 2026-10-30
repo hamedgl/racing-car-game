@@ -146,7 +146,21 @@ export const RacingHud: React.FC<RacingHudProps> = ({
 
   const rpmRatio = Math.max(0, Math.min(1, hud.rpm / 9000));
   const needleDeg = -130 + rpmRatio * 260;
-  const isRedline = hud.rpm >= 7200;
+  const isRedline = hud.rpm >= 7050;
+  const redlineTremor = hud.redlineTremor ?? (hud.rpm >= 6950 ? Math.min(1, (hud.rpm - 6950) / 1400) : 0);
+  // High-frequency deterministic harmonic HUD tremor when hitting redline before an upshift
+  const tremorPhase = hud.rpm * 0.43 + hud.currentLapTimeMs * 0.085;
+  const tremorX = redlineTremor > 0.01 ? Number((Math.sin(tremorPhase) * redlineTremor * 2.8).toFixed(2)) : 0;
+  const tremorY = redlineTremor > 0.01 ? Number((Math.cos(tremorPhase * 1.37) * redlineTremor * 2.2).toFixed(2)) : 0;
+  const tremorRot = redlineTremor > 0.01 ? Number((Math.sin(tremorPhase * 0.91) * redlineTremor * 0.55).toFixed(2)) : 0;
+
+  const triggerManualShift = (direction: 'up' | 'down') => {
+    if (direction === 'up') {
+      touchInputRef.current.shiftUp = true;
+    } else {
+      touchInputRef.current.shiftDown = true;
+    }
+  };
 
   const [visualSteer, setVisualSteer] = React.useState(0);
   const [autoGas, setAutoGas] = React.useState(false);
@@ -214,7 +228,7 @@ export const RacingHud: React.FC<RacingHudProps> = ({
         key={label}
         className={`p-1.5 rounded border ${
           isCritical
-            ? 'border-[#ef4444] bg-[#450a0a]/60 animate-pulse'
+            ? 'border-[#ef4444] bg-[#450a0a]/60'
             : 'border-[#f5f2eb]/12 bg-[#090d16]/90'
         }`}
       >
@@ -239,10 +253,37 @@ export const RacingHud: React.FC<RacingHudProps> = ({
     );
   };
 
+  const cockpitLight = hud.cockpitLighting;
+  const isTunnelZone = cockpitLight?.zone === 'tunnel';
+  const isCanopyZone = cockpitLight?.zone === 'tree_canopy';
+  const dappledAlpha = isCanopyZone ? (cockpitLight?.dappledFlicker ?? 0) * 0.22 : 0;
+  const sodiumAlpha = isTunnelZone ? (cockpitLight?.tunnelSodiumPulse ?? 0) * 0.28 : 0;
+  const sweepPercent = 50 + (cockpitLight?.sweepPhase ?? 0) * 32;
+
   return (
     <div className="fixed inset-0 z-10 pointer-events-none flex flex-col justify-between p-2.5 sm:p-4 md:p-6 overflow-hidden">
+      {/* DYNAMIC COCKPIT WINDSHIELD SUNBEAM FLICKER & TUNNEL SODIUM ATMOSPHERE GLAZE */}
+      {cameraMode === 'cockpit' && cockpitLight && (
+        <div
+          data-testid="cockpit-dynamic-lighting-glaze"
+          data-lighting-zone={cockpitLight.zone}
+          className="fixed inset-0 pointer-events-none z-0 transition-opacity duration-75"
+          style={{
+            background: isTunnelZone
+              ? `radial-gradient(ellipse 68% 42% at ${sweepPercent}% 18%, rgba(255, 158, 44, ${sodiumAlpha.toFixed(
+                  3
+                )}), rgba(9, 13, 22, 0.36) 78%)`
+              : isCanopyZone
+              ? `radial-gradient(ellipse 58% 36% at ${sweepPercent}% 14%, rgba(255, 236, 168, ${dappledAlpha.toFixed(
+                  3
+                )}), rgba(15, 23, 42, ${((1 - cockpitLight.ambientFactor) * 0.22).toFixed(3)}) 75%)`
+              : 'none',
+          }}
+        />
+      )}
+
       {/* TOP ROW: Clean Broadcast Race Timing Plaque (Left), Center Notifications, & Camera / Minimap Radar (Right) */}
-      <div className="flex items-start justify-between gap-2 w-full">
+      <div className="relative z-10 flex items-start justify-between gap-2 w-full">
         {/* CLUSTER 1: Clean Motorsport Timing, Level & Track Groove Plaque */}
         <div
           className="px-3 py-2 md:px-4 md:py-3 rounded border border-[#f5f2eb]/15 space-y-1.5"
@@ -284,6 +325,25 @@ export const RacingHud: React.FC<RacingHudProps> = ({
                 BEST {formatLapTime(hud.bestLapTimeMs)}
               </div>
             </div>
+
+            <div className="h-5 md:h-7 w-px bg-[#f5f2eb]/15" />
+
+            <div data-testid="driver-mastery-score">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[9px] md:text-[10px] font-semibold tracking-widest uppercase text-[#94a3b8]">
+                  STYLE
+                </span>
+                {(hud.styleCombo ?? 1) > 1 && (
+                  <span className="px-1 py-0.2 rounded bg-[#f59e0b]/25 border border-[#f59e0b] text-[9px] font-mono-tabular font-bold text-[#fcd34d]">
+                    ×{hud.styleCombo}
+                  </span>
+                )}
+              </div>
+              <div className="font-mono-tabular font-bold text-xs sm:text-sm md:text-xl text-[#fcd34d] leading-tight whitespace-nowrap">
+                {(hud.styleScore ?? 0).toLocaleString()}
+                <span className="text-[9px] md:text-[10px] text-[#94a3b8] ml-1">PTS</span>
+              </div>
+            </div>
           </div>
 
           {/* Standings list on Desktop/Tablet with tire compound indicator */}
@@ -305,7 +365,7 @@ export const RacingHud: React.FC<RacingHudProps> = ({
             ))}
           </div>
 
-          {/* Subtle Integrated Track Groove, Gravity Load G & Asphalt Status Line */}
+          {/* Subtle Integrated Track Groove, Gravity Load G, Asphalt & Dynamic Lighting Status Line */}
           <div className="flex flex-wrap items-center gap-1.5 pt-0.5 text-[10px] font-semibold tracking-wider uppercase whitespace-nowrap">
             <span className="text-[#f59e0b]">LVL {activeLevel.level}</span>
             <span className="text-[#475569]">·</span>
@@ -340,6 +400,27 @@ export const RacingHud: React.FC<RacingHudProps> = ({
                 TARMAC {Math.round((hud.asphaltGripFactor ?? 1.0) * 100)}%
               </span>
             )}
+            {cockpitLight && (
+              <>
+                <span className="text-[#475569]">·</span>
+                <span
+                  data-testid="cockpit-lighting-status"
+                  className={
+                    isTunnelZone
+                      ? 'text-[#fbbf24]'
+                      : isCanopyZone
+                      ? 'text-[#86efac]'
+                      : 'text-[#94a3b8]'
+                  }
+                >
+                  {isTunnelZone
+                    ? `TUNNEL LAMP ${Math.round(cockpitLight.tunnelSodiumPulse * 100)}%`
+                    : isCanopyZone
+                    ? `CANOPY FLICKER ${Math.round(cockpitLight.dappledFlicker * 100)}%`
+                    : cockpitLight.zoneLabel}
+                </span>
+              </>
+            )}
             {hud.isBoosting && (
               <>
                 <span className="text-[#475569]">·</span>
@@ -352,15 +433,41 @@ export const RacingHud: React.FC<RacingHudProps> = ({
         {/* CENTER PIT STOP / DRIFT NOTIFICATION BANNERS */}
         <div className="flex flex-col items-center gap-1.5 self-start mt-1">
           {tires.pitStopActive ? (
-            <div className="px-4 py-2 rounded border border-[#22c55e] bg-[#0b0f17]/95 text-center shadow-lg min-w-[220px]">
+            <div
+              data-testid="pit-stop-banner"
+              className="px-4 py-2.5 rounded border border-[#22c55e] bg-[#0b0f17]/95 text-center shadow-lg min-w-[270px]"
+            >
               <div className="text-[10px] font-bold tracking-widest text-[#4ade80] uppercase">
                 PIT CREW SERVICE · REFITTING {nextCompoundMeta.label} TIRES
+              </div>
+              <div className="text-[11px] font-mono-tabular font-bold text-[#fef08a] mt-0.5 uppercase">
+                {hud.pitStopAnim?.phaseLabel || 'SERVICING FOUR CORNERS'}
+              </div>
+              <div className="grid grid-cols-4 gap-1 mt-1.5 text-[9px] font-mono-tabular font-bold">
+                {(['FL', 'FR', 'RL', 'RR'] as const).map((cornerLabel) => {
+                  const freshMounted = hud.pitStopAnim?.showFreshCompound ?? false;
+                  return (
+                    <span
+                      key={cornerLabel}
+                      className={`px-1 py-0.5 rounded border ${
+                        freshMounted
+                          ? 'border-[#22c55e] bg-[#14532d]/70 text-[#4ade80]'
+                          : 'border-[#f59e0b]/60 bg-[#78350f]/50 text-[#fcd34d]'
+                      }`}
+                    >
+                      {cornerLabel} {freshMounted ? 'LOCKED' : 'HUB'}
+                    </span>
+                  );
+                })}
               </div>
               <div className="w-full h-2 bg-[#1e293b] rounded overflow-hidden mt-1.5 border border-[#22c55e]/40">
                 <div
                   className="h-full bg-[#22c55e] transition-all duration-75"
                   style={{
-                    width: `${Math.min(100, Math.max(0, (1 - tires.pitStopTimer / 2.0) * 100))}%`,
+                    width: `${Math.min(
+                      100,
+                      Math.max(0, (hud.pitStopAnim ? hud.pitStopAnim.progress : 1 - tires.pitStopTimer / 2.4) * 100)
+                    )}%`,
                   }}
                 />
               </div>
@@ -383,6 +490,20 @@ export const RacingHud: React.FC<RacingHudProps> = ({
               </div>
             </div>
           ) : null}
+
+          {(hud.lastActionTimer ?? 0) > 0 && hud.lastActionBanner && !tires.pitStopActive && (
+            <div
+              data-testid="mastery-action-banner"
+              className="px-3.5 py-1.5 rounded border border-[#f59e0b] bg-[#0b0f17]/95 text-center shadow-lg"
+            >
+              <div className="text-[10px] font-bold tracking-widest text-[#fcd34d] uppercase">
+                ★ {hud.lastActionBanner} ★
+              </div>
+              <div className="text-xs md:text-base font-display font-extrabold text-[#4ade80] font-mono-tabular">
+                +{hud.lastActionPoints} PTS {(hud.styleCombo ?? 1) > 1 ? `(×${hud.styleCombo} COMBO)` : ''}
+              </div>
+            </div>
+          )}
 
           {hud.isDrifting && !tires.pitStopActive && (
             <div className="px-3.5 py-1.5 rounded border border-[#f59e0b]/50 bg-[#0b0f17]/90 text-center shadow-lg">
@@ -553,12 +674,10 @@ export const RacingHud: React.FC<RacingHudProps> = ({
 
       {/* BOTTOM ROW: Tire & Pit Strategy Cluster (Desktop Left), Mobile Controls, & Veglia Tachometer (Desktop Right) */}
       <div className="flex flex-col md:flex-row items-stretch md:items-end justify-between gap-2 w-full">
-        {/* DESKTOP: 4-Corner Dynamic Tire Telemetry & Pit Stop Strategy Module (Docks right in Cockpit mode so 3D wheel & gauges are 100% clear) */}
+        {/* DESKTOP: 4-Corner Dynamic Tire Telemetry & Pit Stop Strategy Module (Docks bottom-left so 3D wheel, Veglia dials, & center console gauges are 100% clear) */}
         <div
           data-testid="tire-telemetry-panel"
-          className={`hidden md:flex flex-col gap-2 px-3.5 py-3 rounded border border-[#f5f2eb]/15 w-72 pointer-events-auto ${
-            cameraMode === 'cockpit' ? 'ml-auto' : ''
-          }`}
+          className="hidden md:flex flex-col gap-2 px-3.5 py-3 rounded border border-[#f5f2eb]/15 w-64 pointer-events-auto"
           style={{ backgroundColor: 'rgba(11, 15, 23, 0.90)' }}
         >
           <div className="flex items-center justify-between border-b border-[#f5f2eb]/10 pb-1.5">
@@ -796,99 +915,270 @@ export const RacingHud: React.FC<RacingHudProps> = ({
           </div>
         </div>
 
-        {/* Desktop Instrument Cluster: Full Veglia Dial in External Views, Sleek Chronometer Telemetry in 3D Cockpit View */}
-        <div
-          className={`hidden md:flex items-end gap-3 ${
-            cameraMode === 'cockpit' ? '' : 'ml-auto'
-          }`}
-        >
+        {/* Desktop Instrument Cluster: Full Veglia Dial in External Views, Low-Profile Horizontal Telemetry Strip in 3D Cockpit View (with Redline Visual Tremor) */}
+        <div className="hidden md:flex items-end gap-3 ml-auto pointer-events-auto">
           <div
             data-testid="speedometer-cluster"
-            className="flex items-center gap-4 px-4 py-3 rounded border border-[#f5f2eb]/15"
-            style={{ backgroundColor: 'rgba(11, 15, 23, 0.90)' }}
+            data-redline-tremor={redlineTremor.toFixed(3)}
+            className={`flex items-center rounded border transition-colors ${
+              cameraMode === 'cockpit' ? 'gap-3 px-3 py-1.5' : 'gap-3.5 px-4 py-3'
+            } ${
+              isRedline
+                ? 'border-[#ef4444] shadow-[0_0_18px_rgba(239,68,68,0.45)]'
+                : 'border-[#f5f2eb]/15'
+            }`}
+            style={{
+              backgroundColor: isRedline ? 'rgba(28, 10, 14, 0.92)' : 'rgba(11, 15, 23, 0.90)',
+              transform:
+                redlineTremor > 0.01
+                  ? `translate3d(${tremorX}px, ${tremorY}px, 0) rotate(${tremorRot}deg)`
+                  : 'none',
+            }}
           >
-            {cameraMode !== 'cockpit' && (
-              <div className="relative w-28 h-28 shrink-0">
-                <img
-                  src={tachDialPng}
-                  alt="Veglia Borletti Tachometer"
-                  className="w-full h-full object-contain select-none pointer-events-none"
-                />
-                <svg viewBox="0 0 110 110" className="absolute inset-0 w-full h-full">
-                  <text
-                    x="55"
-                    y="78"
-                    fill={isRedline ? '#ef4444' : '#f59e0b'}
-                    fontSize="16"
-                    fontWeight="bold"
-                    textAnchor="middle"
-                    fontFamily="monospace"
-                  >
-                    G{hud.gear}
-                  </text>
-                  {hud.handbrake && (
-                    <text x="55" y="91" fill="#ef4444" fontSize="7.5" fontWeight="bold" textAnchor="middle">
-                      BRAKE
-                    </text>
-                  )}
-                  <g transform={`rotate(${needleDeg.toFixed(1)} 55 55)`}>
-                    <line
-                      x1="55"
-                      y1="62"
-                      x2="55"
-                      y2="16"
-                      stroke="#f59e0b"
-                      strokeWidth="2.6"
-                      strokeLinecap="round"
-                    />
-                    <circle cx="55" cy="55" r="5.5" fill="#e2e8f0" stroke="#0f172a" strokeWidth="1.5" />
-                  </g>
-                </svg>
-              </div>
-            )}
+            {cameraMode === 'cockpit' ? (
+              /* Ultra-clean low-profile horizontal telemetry bar in Cockpit mode so 3D Halda Twinmaster & Heuer stopwatches are 100% unobstructed */
+              <div className="flex items-center gap-3">
+                <div className="flex flex-col gap-1">
+                  <div className="grid grid-cols-6 gap-0.5 w-20">
+                    {[5200, 5800, 6350, 6800, 7100, 7450].map((thresh, idx) => {
+                      const lit = hud.rpm >= thresh;
+                      const ledColor =
+                        idx < 2 ? '#22c55e' : idx < 4 ? '#f59e0b' : '#ef4444';
+                      return (
+                        <span
+                          key={thresh}
+                          className="h-1.5 rounded-sm transition-colors"
+                          style={{
+                            backgroundColor: lit ? ledColor : '#1e293b',
+                            boxShadow: lit && idx >= 4 ? '0 0 6px #ef4444' : 'none',
+                          }}
+                        />
+                      );
+                    })}
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className={`px-1.5 py-0.5 rounded text-[11px] font-mono-tabular font-bold border ${
+                        isRedline
+                          ? 'border-[#ef4444] bg-[#ef4444]/30 text-[#fef2f2]'
+                          : 'border-[#f59e0b]/40 bg-[#f59e0b]/15 text-[#f59e0b]'
+                      }`}
+                    >
+                      G{hud.gear}
+                    </span>
+                    <span className={`text-[11px] font-mono-tabular ${isRedline ? 'text-[#f87171] font-bold' : 'text-[#94a3b8]'}`}>
+                      {Math.round(hud.rpm)} RPM
+                    </span>
+                  </div>
+                </div>
 
-            <div className="flex flex-col items-end min-w-[132px]">
-              <div className="flex items-center justify-between w-full gap-2">
-                <span
-                  className={`px-1.5 py-0.5 rounded text-xs font-mono-tabular font-bold border ${
-                    isRedline
-                      ? 'border-[#ef4444] bg-[#ef4444]/20 text-[#fca5a5] animate-pulse'
-                      : 'border-[#f59e0b]/40 bg-[#f59e0b]/15 text-[#f59e0b]'
-                  }`}
-                >
-                  GEAR {hud.gear}
-                </span>
-                <span className="text-[10px] font-semibold tracking-widest uppercase text-[#94a3b8]">
-                  KM/H
-                </span>
-              </div>
-              <div className="font-display font-extrabold text-4xl text-[#f5f2eb] font-mono-tabular leading-none hud-stroke mt-1">
-                {Math.round(hud.speedKmh)}
-              </div>
-              <div className="flex items-center justify-between w-full text-xs font-mono-tabular text-[#94a3b8] mt-1">
-                <span>{(hud.verticalLoadG ?? 1.0).toFixed(2)}G</span>
-                <span>{Math.round(hud.rpm)} RPM</span>
-              </div>
-
-              {/* Nitro Overboost Bar */}
-              <div className="w-full mt-2 pt-1.5 border-t border-[#f5f2eb]/10">
-                <div className="flex items-center justify-between text-[10px] font-mono-tabular font-bold">
-                  <span className={hud.isBoosting ? 'text-[#38bdf8] animate-pulse' : 'text-[#7dd3fc]'}>
-                    ⚡ N2O [SHIFT]
+                <div className="flex items-baseline gap-1 border-l border-[#f5f2eb]/15 pl-3">
+                  <span className="font-display font-extrabold text-3xl text-[#f5f2eb] font-mono-tabular leading-none hud-stroke">
+                    {Math.round(hud.speedKmh)}
                   </span>
-                  <span className="text-[#f5f2eb]">{hud.nitroCharge}%</span>
+                  <span className="text-[9px] font-semibold uppercase text-[#94a3b8]">KM/H</span>
                 </div>
-                <div className="w-full h-2 bg-[#0f172a] rounded overflow-hidden mt-1 border border-[#38bdf8]/30">
-                  <div
-                    className="h-full transition-all duration-150"
-                    style={{
-                      width: `${hud.nitroCharge}%`,
-                      backgroundColor: hud.isBoosting ? '#38bdf8' : '#0284c7',
+
+                <div className="flex items-center gap-1 border-l border-[#f5f2eb]/15 pl-2.5">
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    title="Manual Downshift [Q]"
+                    onClick={(e) => {
+                      e.currentTarget.blur();
+                      triggerManualShift('down');
                     }}
-                  />
+                    className="px-1.5 py-1 rounded border border-[#f5f2eb]/15 bg-[#141c2b] hover:bg-[#1e293b] text-[9px] font-mono-tabular font-bold text-[#cbd5e1] cursor-pointer"
+                  >
+                    ▼ Q
+                  </button>
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    title="Manual Redline Upshift [E]"
+                    onClick={(e) => {
+                      e.currentTarget.blur();
+                      triggerManualShift('up');
+                    }}
+                    className={`px-1.5 py-1 rounded border text-[9px] font-mono-tabular font-bold cursor-pointer ${
+                      isRedline && hud.gear < 5
+                        ? 'border-[#ef4444] bg-[#ef4444] text-[#fef2f2] animate-pulse'
+                        : 'border-[#f5f2eb]/15 bg-[#141c2b] hover:bg-[#1e293b] text-[#cbd5e1]'
+                    }`}
+                  >
+                    ▲ E
+                  </button>
+                </div>
+
+                <div className="flex flex-col w-20 border-l border-[#f5f2eb]/15 pl-2.5">
+                  <div className="flex items-center justify-between text-[9px] font-mono-tabular font-bold">
+                    <span className={hud.isBoosting ? 'text-[#38bdf8]' : 'text-[#7dd3fc]'}>N2O</span>
+                    <span className="text-[#f5f2eb]">{hud.nitroCharge}%</span>
+                  </div>
+                  <div className="w-full h-1.5 bg-[#0f172a] rounded overflow-hidden mt-1 border border-[#38bdf8]/30">
+                    <div
+                      className="h-full transition-all duration-150"
+                      style={{
+                        width: `${hud.nitroCharge}%`,
+                        backgroundColor: hud.isBoosting ? '#38bdf8' : '#0284c7',
+                      }}
+                    />
+                  </div>
                 </div>
               </div>
-            </div>
+            ) : (
+              <>
+                <div className="relative w-28 h-28 shrink-0">
+                  <img
+                    src={tachDialPng}
+                    alt="Veglia Borletti Tachometer"
+                    className="w-full h-full object-contain select-none pointer-events-none"
+                  />
+                  <svg viewBox="0 0 110 110" className="absolute inset-0 w-full h-full">
+                    <text
+                      x="55"
+                      y="78"
+                      fill={isRedline ? '#ef4444' : '#f59e0b'}
+                      fontSize="16"
+                      fontWeight="bold"
+                      textAnchor="middle"
+                      fontFamily="monospace"
+                    >
+                      G{hud.gear}
+                    </text>
+                    {hud.handbrake && (
+                      <text x="55" y="91" fill="#ef4444" fontSize="7.5" fontWeight="bold" textAnchor="middle">
+                        BRAKE
+                      </text>
+                    )}
+                    <g transform={`rotate(${(needleDeg + tremorRot * 2.2).toFixed(1)} 55 55)`}>
+                      <line
+                        x1="55"
+                        y1="62"
+                        x2="55"
+                        y2="16"
+                        stroke={isRedline ? '#ef4444' : '#f59e0b'}
+                        strokeWidth="2.6"
+                        strokeLinecap="round"
+                      />
+                      <circle cx="55" cy="55" r="5.5" fill="#e2e8f0" stroke="#0f172a" strokeWidth="1.5" />
+                    </g>
+                  </svg>
+                </div>
+
+                <div className="flex flex-col items-end min-w-[144px]">
+                  {/* 6-LED Sequential RPM Shift-Light Strip */}
+                  <div className="grid grid-cols-6 gap-1 w-full mb-1.5">
+                    {[5200, 5800, 6350, 6800, 7100, 7450].map((thresh, idx) => {
+                      const lit = hud.rpm >= thresh;
+                      const ledColor =
+                        idx < 2 ? '#22c55e' : idx < 4 ? '#f59e0b' : '#ef4444';
+                      return (
+                        <span
+                          key={thresh}
+                          className="h-1.5 rounded-sm transition-colors"
+                          style={{
+                            backgroundColor: lit ? ledColor : '#1e293b',
+                            boxShadow: lit && idx >= 4 ? '0 0 6px #ef4444' : 'none',
+                          }}
+                        />
+                      );
+                    })}
+                  </div>
+
+                  <div className="flex items-center justify-between w-full gap-2">
+                    <span
+                      className={`px-1.5 py-0.5 rounded text-xs font-mono-tabular font-bold border ${
+                        isRedline
+                          ? 'border-[#ef4444] bg-[#ef4444]/30 text-[#fef2f2]'
+                          : 'border-[#f59e0b]/40 bg-[#f59e0b]/15 text-[#f59e0b]'
+                      }`}
+                    >
+                      GEAR {hud.gear}
+                    </span>
+                    {isRedline && hud.gear < 5 ? (
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        onClick={(e) => {
+                          e.currentTarget.blur();
+                          triggerManualShift('up');
+                        }}
+                        className="px-1.5 py-0.5 rounded bg-[#ef4444] text-[#fef2f2] text-[9px] font-mono-tabular font-extrabold tracking-wider uppercase cursor-pointer animate-pulse"
+                      >
+                        SHIFT [E] ▲
+                      </button>
+                    ) : (
+                      <span className="text-[10px] font-semibold tracking-widest uppercase text-[#94a3b8]">
+                        KM/H
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="font-display font-extrabold text-4xl text-[#f5f2eb] font-mono-tabular leading-none hud-stroke mt-1">
+                    {Math.round(hud.speedKmh)}
+                  </div>
+
+                  <div className="flex items-center justify-between w-full text-xs font-mono-tabular text-[#94a3b8] mt-1">
+                    <span>{(hud.verticalLoadG ?? 1.0).toFixed(2)}G</span>
+                    <span className={isRedline ? 'text-[#f87171] font-bold' : ''}>
+                      {Math.round(hud.rpm)} RPM
+                    </span>
+                  </div>
+
+                  {/* Manual Gear Shift Override Buttons [Q] Down / [E] Up */}
+                  <div className="grid grid-cols-2 gap-1 w-full mt-1.5">
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      title="Manual Downshift [Q]"
+                      onClick={(e) => {
+                        e.currentTarget.blur();
+                        triggerManualShift('down');
+                      }}
+                      className="px-1.5 py-0.5 rounded border border-[#f5f2eb]/15 bg-[#141c2b] hover:bg-[#1e293b] text-[9px] font-mono-tabular font-bold text-[#cbd5e1] cursor-pointer"
+                    >
+                      ▼ DOWN [Q]
+                    </button>
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      title="Manual Redline Upshift [E]"
+                      onClick={(e) => {
+                        e.currentTarget.blur();
+                        triggerManualShift('up');
+                      }}
+                      className={`px-1.5 py-0.5 rounded border text-[9px] font-mono-tabular font-bold cursor-pointer ${
+                        isRedline && hud.gear < 5
+                          ? 'border-[#ef4444] bg-[#991b1b]/80 text-[#fef08a]'
+                          : 'border-[#f5f2eb]/15 bg-[#141c2b] hover:bg-[#1e293b] text-[#cbd5e1]'
+                      }`}
+                    >
+                      ▲ SHIFT [E]
+                    </button>
+                  </div>
+
+                  {/* Nitro Overboost Bar */}
+                  <div className="w-full mt-1.5 pt-1 border-t border-[#f5f2eb]/10">
+                    <div className="flex items-center justify-between text-[10px] font-mono-tabular font-bold">
+                      <span className={hud.isBoosting ? 'text-[#38bdf8]' : 'text-[#7dd3fc]'}>
+                        ⚡ N2O [SHIFT]
+                      </span>
+                      <span className="text-[#f5f2eb]">{hud.nitroCharge}%</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-[#0f172a] rounded overflow-hidden mt-0.5 border border-[#38bdf8]/30">
+                      <div
+                        className="h-full transition-all duration-150"
+                        style={{
+                          width: `${hud.nitroCharge}%`,
+                          backgroundColor: hud.isBoosting ? '#38bdf8' : '#0284c7',
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>

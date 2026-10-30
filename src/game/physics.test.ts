@@ -20,7 +20,13 @@ import {
   stepPitStopService,
   refitFreshTires,
   evaluateTireGripMultiplier,
+  evaluatePitStopAnimation,
+  PIT_STOP_DURATION_SEC,
+  computeRedlineTremor,
+  createTrackBreakableProps,
+  stepBreakableProps,
 } from './physics';
+import { evaluateCockpitLightingState } from './cockpitLighting';
 
 test('computeEffectiveCarStats upgrades and tuning modify performance stats predictably', () => {
   const baseCar = CLASSIC_CARS[0];
@@ -407,6 +413,281 @@ test('3D Gravity normal load G, asphalt grip factor, kerb rumble, and Pro-Assist
   assert.ok(
     (assistedCar.verticalLoadG ?? 0) > 0.4 && (assistedCar.verticalLoadG ?? 0) < 2.0,
     `Vertical load G (${assistedCar.verticalLoadG}) must be within realistic physical bounds`
+  );
+});
+
+test('evaluatePitStopAnimation computes 5 distinct 3D pit crew service phases and wheel removal kinematics', () => {
+  const idleAnim = evaluatePitStopAnimation(false, 0, PIT_STOP_DURATION_SEC);
+  assert.equal(idleAnim.active, false);
+  assert.equal(idleAnim.phase, 'idle');
+  assert.equal(idleAnim.chassisLiftY, 0);
+
+  // Phase 1: jacking_up (progress ~0.10)
+  const phase1 = evaluatePitStopAnimation(true, PIT_STOP_DURATION_SEC * 0.9, PIT_STOP_DURATION_SEC);
+  assert.equal(phase1.phase, 'jacking_up');
+  assert.ok(phase1.chassisLiftY > 0.04, 'Chassis should lift on pneumatic jacks');
+  assert.equal(phase1.showFreshCompound, false);
+
+  // Phase 2a: wheels_off unfastening spinners (progress ~0.24)
+  const phase2a = evaluatePitStopAnimation(true, PIT_STOP_DURATION_SEC * 0.76, PIT_STOP_DURATION_SEC);
+  assert.equal(phase2a.phase, 'wheels_off');
+  assert.ok(phase2a.wrenchActive, 'Impact wrenches should be active while unfastening knock-off spinners');
+
+  // Phase 2b: wheels_off pulling worn wheels off hubs (progress ~0.40)
+  const phase2 = evaluatePitStopAnimation(true, PIT_STOP_DURATION_SEC * 0.60, PIT_STOP_DURATION_SEC);
+  assert.equal(phase2.phase, 'wheels_off');
+  assert.ok(phase2.wheelLateralOffsetM > 0.15, 'Worn wheels should slide outward off hubs');
+  assert.equal(phase2.showFreshCompound, false);
+
+  // Phase 3: wheels_on (progress ~0.55)
+  const phase3 = evaluatePitStopAnimation(true, PIT_STOP_DURATION_SEC * 0.45, PIT_STOP_DURATION_SEC);
+  assert.equal(phase3.phase, 'wheels_on');
+  assert.equal(phase3.showFreshCompound, true, 'Fresh compound tires should be mounted in phase 3');
+  assert.ok(phase3.wheelLateralOffsetM > 0.05, 'Fresh wheels should slide onto hubs');
+
+  // Phase 4: torque_lock (progress ~0.75)
+  const phase4 = evaluatePitStopAnimation(true, PIT_STOP_DURATION_SEC * 0.25, PIT_STOP_DURATION_SEC);
+  assert.equal(phase4.phase, 'torque_lock');
+  assert.ok(phase4.wrenchActive, 'Impact wrenches should torque-lock knock-off spinners');
+  assert.equal(phase4.wheelLateralOffsetM, 0, 'Wheels must be seated flush on hubs during torque lock');
+
+  // Phase 5: dropping_go (progress ~0.92)
+  const phase5 = evaluatePitStopAnimation(true, PIT_STOP_DURATION_SEC * 0.08, PIT_STOP_DURATION_SEC);
+  assert.equal(phase5.phase, 'dropping_go');
+  assert.equal(phase5.lollipopRaised, true, 'Pit marshal lollipop sign must raise for GO');
+  assert.ok(phase5.chassisLiftY < phase2.chassisLiftY, 'Air jacks must drop chassis back to ground');
+});
+
+test('Realistic 4-corner OBB barrier collision scrubs speed on angled hits and mass-based car-to-car collision transfers momentum & yaw torque', () => {
+  const track = TRACKS.monza_storico;
+  const gt40Spec = CLASSIC_CARS.find((c) => c.id === 'dearborn_gt40_mk2')!;
+  const porscheSpec = CLASSIC_CARS.find((c) => c.id === 'stuttgart_911s_rs')!;
+  const stats = computeEffectiveCarStats(gt40Spec, DEFAULT_UPGRADES, DEFAULT_TUNING);
+
+  // 1. Test angled front-right corner impact against right-hand Armco barrier
+  const wallCar = createInitialVehicleState({
+    id: 'wall-test',
+    isPlayer: true,
+    driverName: 'Wall Tester',
+    carSpecId: gt40Spec.id,
+    livery: gt40Spec.defaultLivery,
+    track,
+    gridSlot: 0,
+  });
+
+  const sample0 = track.samples[0];
+  const trackYaw = Math.atan2(sample0.tx, sample0.tz);
+  // Angle car 25 degrees toward the right barrier at 45 m/s right next to the wall
+  wallCar.yaw = trackYaw - 0.44;
+  const fx = Math.sin(wallCar.yaw);
+  const fz = Math.cos(wallCar.yaw);
+  wallCar.vx = fx * 45;
+  wallCar.vz = fz * 45;
+  wallCar.speedMs = 45;
+  const barrierEdge = sample0.width * 0.5 + 1.12;
+  wallCar.x = sample0.x + sample0.rx * barrierEdge;
+  wallCar.z = sample0.z + sample0.rz * barrierEdge;
+
+  const events = stepVehiclePhysics(
+    wallCar,
+    { forward: false, backward: false, left: false, right: false, handbrake: false },
+    stats,
+    track,
+    1 / 60,
+    100
+  );
+
+  assert.ok(events.wallImpactSpeedMs > 5, `Angled barrier impact should register significant normal impact speed (got ${events.wallImpactSpeedMs})`);
+  assert.ok(wallCar.speedMs < 39, `Angled barrier impact must scrub kinetic energy & speed (dropped from 45 to ${wallCar.speedMs})`);
+  assert.ok((wallCar.collisionTimer ?? 0) > 0.1, 'Barrier collision should set collisionTimer shock state');
+  assert.ok(Math.abs(wallCar.angularVelocity) > 0.05, 'Corner barrier impact should impart rotational yaw impulse');
+
+  // 2. Test mass-weighted car-to-car collision & offset PIT rotational impulse
+  const heavyCar = createInitialVehicleState({
+    id: 'heavy',
+    isPlayer: true,
+    driverName: 'GT40 Heavy (1080kg)',
+    carSpecId: 'dearborn_gt40_mk2',
+    livery: gt40Spec.defaultLivery,
+    track,
+    gridSlot: 0,
+  });
+  const lightCar = createInitialVehicleState({
+    id: 'light',
+    isPlayer: false,
+    driverName: '911S Light (830kg)',
+    carSpecId: 'stuttgart_911s_rs',
+    livery: porscheSpec.defaultLivery,
+    track,
+    gridSlot: 1,
+  });
+
+  // Place both facing +Z, with heavyCar striking lightCar's rear-left quarter panel
+  heavyCar.yaw = 0;
+  lightCar.yaw = 0;
+  heavyCar.x = 0;
+  heavyCar.z = 0;
+  heavyCar.vx = 12;
+  heavyCar.vz = 32;
+  heavyCar.speedMs = Math.hypot(12, 32);
+
+  lightCar.x = 1.15;
+  lightCar.z = 1.18;
+  lightCar.vx = 0;
+  lightCar.vz = 22;
+  lightCar.speedMs = 22;
+
+  const res = resolveMultiVehicleInteractions([heavyCar, lightCar], 'off');
+  assert.ok(res.playerImpactSpeedMs > 5, 'Should report realistic player impact speed');
+  const heavyDeltaV = Math.hypot(heavyCar.vx - 12, heavyCar.vz - 32);
+  const lightDeltaV = Math.hypot(lightCar.vx - 0, lightCar.vz - 22);
+  assert.ok(
+    lightDeltaV > heavyDeltaV * 1.15,
+    `Lighter 830kg 911S delta-V (${lightDeltaV.toFixed(2)}) must exceed heavier 1080kg GT40 delta-V (${heavyDeltaV.toFixed(2)})`
+  );
+  assert.ok(
+    Math.abs(lightCar.angularVelocity) > 0.15,
+    `Offset rear-quarter impact must impart rotational yaw velocity to struck car (got ${lightCar.angularVelocity})`
+  );
+});
+
+test('Redline engine tremor, manual upshift Perfect Shift bonus, and breakable trackside props operate accurately', () => {
+  const track = TRACKS.monza_storico;
+  const car = CLASSIC_CARS[0];
+  const stats = computeEffectiveCarStats(car, DEFAULT_UPGRADES, DEFAULT_TUNING);
+
+  // 1. Verify computeRedlineTremor is 0 below 6950 RPM and ramps smoothly up to 1.0 in the redline band
+  assert.equal(computeRedlineTremor(4200, 2), 0, 'Tremor must be 0 in mid-range RPM');
+  assert.equal(computeRedlineTremor(6950, 2), 0, 'Tremor must be 0 at exact 6950 RPM threshold');
+  const midRedline = computeRedlineTremor(7500, 2);
+  const peakRedline = computeRedlineTremor(8350, 2);
+  assert.ok(midRedline > 0.2 && midRedline < 0.8, `Mid-redline tremor should be moderate (got ${midRedline})`);
+  assert.ok(peakRedline >= 0.95, `Peak redline tremor at 8350 RPM should approach 1.0 (got ${peakRedline})`);
+
+  // 2. Verify manual upshift in the redline band triggers PERFECT REDLINE SHIFT bonus & speed surge
+  const player = createInitialVehicleState({
+    id: 'player',
+    isPlayer: true,
+    driverName: 'Driver',
+    carSpecId: car.id,
+    livery: car.defaultLivery,
+    track,
+    gridSlot: 0,
+  });
+  player.gear = 2;
+  player.rpm = 7650;
+  const fx = Math.sin(player.yaw);
+  const fz = Math.cos(player.yaw);
+  player.vx = fx * 28;
+  player.vz = fz * 28;
+  player.speedMs = 28;
+  player.nitroCharge = 50;
+
+  const shiftEvents = stepVehiclePhysics(
+    player,
+    { forward: true, backward: false, left: false, right: false, handbrake: false, shiftUp: true },
+    stats,
+    track,
+    1 / 60,
+    1000
+  );
+
+  assert.equal(shiftEvents.gearChanged, true, 'Manual shiftUp input must trigger gearChanged');
+  assert.equal(player.gear, 3, 'Manual shiftUp must advance gear from 2 to 3');
+  assert.ok(player.speedMs > 29.5, `Perfect redline shift must grant a speed surge (got ${player.speedMs})`);
+  assert.ok(player.styleScore >= 250, `Perfect redline shift must award >= 250 style points (got ${player.styleScore})`);
+  assert.equal(player.lastActionBanner, 'PERFECT REDLINE SHIFT');
+
+  // 3. Verify breakable trackside props spawn, shatter/launch on impact, and award style points
+  const breakables = createTrackBreakableProps(track);
+  assert.ok(breakables.length >= 12, `Track should generate breakable hay bales, cones, and signs (got ${breakables.length})`);
+
+  const targetProp = breakables[0];
+  player.x = targetProp.baseX;
+  player.z = targetProp.baseZ;
+  player.vx = fx * 35;
+  player.vz = fz * 35;
+  player.speedMs = 35;
+  const scoreBefore = player.styleScore;
+
+  const brokenEvents = stepBreakableProps(breakables, [player], 1 / 60);
+  assert.equal(brokenEvents.length, 1, 'Colliding with an unbroken trackside prop must emit a broken event');
+  assert.equal(targetProp.broken, true, 'Struck prop must be marked broken');
+  assert.ok(targetProp.vy > 3.5, 'Struck prop must launch upward with 3D ballistic velocity');
+  assert.ok(player.styleScore > scoreBefore, 'Smashing a breakable prop must award gamified style points');
+});
+
+test('evaluateCockpitLightingState computes dynamic canopy flicker, tunnel sodium pulses, and instrument backlight', () => {
+  const clearWeather = createInitialWeatherState('clear');
+
+  // 1. Open sky sector (e.g. station 300 / 600)
+  const openSky = evaluateCockpitLightingState({
+    trackSampleIndex: 300,
+    totalSamples: 600,
+    distanceM: 400,
+    speedMs: 42,
+    weather: clearWeather,
+    timeSec: 10,
+  });
+  assert.equal(openSky.zone, 'open_sky', 'Station 300 must be open_sky');
+  assert.ok(openSky.ambientFactor > 0.85, `Open sky ambient factor should be bright (got ${openSky.ambientFactor})`);
+  assert.ok(openSky.instrumentBacklight < 0.25, `Open sky should keep instrument backlight low in clear weather (got ${openSky.instrumentBacklight})`);
+
+  // 2. Overarching roadside tree canopy sector (station 100 / 600 is inside 66..134)
+  const canopyA = evaluateCockpitLightingState({
+    trackSampleIndex: 100,
+    totalSamples: 600,
+    distanceM: 810.0,
+    speedMs: 48,
+    weather: clearWeather,
+    timeSec: 12.0,
+  });
+  const canopyB = evaluateCockpitLightingState({
+    trackSampleIndex: 100,
+    totalSamples: 600,
+    distanceM: 813.6,
+    speedMs: 48,
+    weather: clearWeather,
+    timeSec: 12.08,
+  });
+  assert.equal(canopyA.zone, 'tree_canopy', 'Station 100 must be inside tree_canopy sector');
+  assert.ok(canopyA.dappledFlicker > 0, 'Tree canopy at speed must generate dappled sunbeam flicker');
+  assert.notEqual(
+    canopyA.ambientFactor.toFixed(3),
+    canopyB.ambientFactor.toFixed(3),
+    'Advancing through tree canopy must modulate ambient light level via dappled leaf flicker'
+  );
+
+  // 3. Vaulted tunnel gallery sector (station 162 / 600 is inside 138..188)
+  // Lamp spacing is 14m, so distanceM = 1400 (0m offset from overhead sodium lamp) vs 1407 (7m midpoint between lamps)
+  const tunnelUnderLamp = evaluateCockpitLightingState({
+    trackSampleIndex: 162,
+    totalSamples: 600,
+    distanceM: 1400,
+    speedMs: 52,
+    weather: clearWeather,
+    timeSec: 20,
+  });
+  const tunnelBetweenLamps = evaluateCockpitLightingState({
+    trackSampleIndex: 162,
+    totalSamples: 600,
+    distanceM: 1407,
+    speedMs: 52,
+    weather: clearWeather,
+    timeSec: 20.13,
+  });
+  assert.equal(tunnelUnderLamp.zone, 'tunnel', 'Station 162 must be inside vaulted tunnel sector');
+  assert.ok(
+    tunnelUnderLamp.tunnelSodiumPulse > 0.85,
+    `Directly beneath a 14m tunnel luminaire should produce strong sodium pulse (got ${tunnelUnderLamp.tunnelSodiumPulse})`
+  );
+  assert.ok(
+    tunnelUnderLamp.tunnelSodiumPulse > tunnelBetweenLamps.tunnelSodiumPulse + 0.4,
+    'Sodium pulse must peak under overhead fixtures and dip between fixtures'
+  );
+  assert.ok(
+    tunnelUnderLamp.instrumentBacklight > 0.7,
+    `Tunnel darkness must automatically illuminate warm cockpit instrument backlights (got ${tunnelUnderLamp.instrumentBacklight})`
   );
 });
 

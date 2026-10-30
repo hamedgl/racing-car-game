@@ -17,9 +17,15 @@ import {
   TireCompound,
   CornerTireState,
   VehicleTireState,
+  PitStopPhase,
+  PitStopAnimationState,
   HandlingMode,
+  BreakablePropState,
+  BreakablePropType,
 } from './types';
 import { findClosestTrackSample } from './tracks';
+
+export const PIT_STOP_DURATION_SEC = 2.4;
 
 export function clamp(val: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, val));
@@ -30,6 +36,40 @@ export function normalizeAngle(angle: number): number {
   while (a > Math.PI) a -= Math.PI * 2;
   while (a < -Math.PI) a += Math.PI * 2;
   return a;
+}
+
+/**
+ * Computes the normalized high-frequency mechanical redline tremor intensity (0..1)
+ * when a high-revving historic engine enters the 6950..8500 RPM redline band before an upshift.
+ */
+export function computeRedlineTremor(rpm: number, gear = 1): number {
+  const redlineThreshold = 6950;
+  if (rpm <= redlineThreshold || gear < 1) return 0;
+  const raw = clamp((rpm - redlineThreshold) / (8350 - redlineThreshold), 0, 1);
+  // Nonlinear ramp with extra mechanical intensity in lower/mid gears and near rev-limiter bounce
+  const limiterPulse = rpm >= 7750 ? 0.14 * Math.abs(Math.sin(rpm * 0.085)) : 0;
+  return Number(clamp(raw * (0.45 + 0.55 * raw) + limiterPulse, 0, 1).toFixed(4));
+}
+
+/**
+ * Awards gamified Driver Mastery style points, increments the active combo multiplier (up to 5x),
+ * and sets the live HUD action callout banner.
+ */
+export function awardDriverMasteryAction(
+  vehicle: VehiclePhysicsState,
+  label: string,
+  basePoints: number
+): number {
+  if (!vehicle.isPlayer) return 0;
+  const activeCombo = clamp((vehicle.comboTimer > 0 ? vehicle.styleCombo : 0) + 1, 1, 5);
+  const totalPts = Math.round(basePoints * (1 + (activeCombo - 1) * 0.25));
+  vehicle.styleCombo = activeCombo;
+  vehicle.comboTimer = 5.5;
+  vehicle.styleScore = (vehicle.styleScore ?? 0) + totalPts;
+  vehicle.lastActionBanner = label;
+  vehicle.lastActionPoints = totalPts;
+  vehicle.lastActionTimer = 2.1;
+  return totalPts;
 }
 
 export const TIRE_COMPOUND_SPECS: Record<
@@ -126,6 +166,7 @@ export function createInitialTireState(
     pitStopActive: false,
     pitStopTimer: 0,
     pitStopsCompleted: 0,
+    pitCooldownTimer: 0,
   };
 }
 
@@ -323,7 +364,146 @@ export function stepTireSimulation(
 }
 
 /**
- * Handles Pit Lane Service Box detection and 2.2-second 4-tire swap service on the Start/Finish straight.
+ * Evaluates the deterministic 5-phase 3D Pit Stop Tire-Change Animation kinematics
+ * from the current pitStopActive state and countdown timer.
+ */
+export function evaluatePitStopAnimation(
+  pitStopActive: boolean,
+  pitStopTimer: number,
+  totalDuration = PIT_STOP_DURATION_SEC
+): PitStopAnimationState {
+  if (!pitStopActive || totalDuration <= 0) {
+    return {
+      active: false,
+      phase: 'idle',
+      phaseLabel: 'STANDBY',
+      progress: 0,
+      phaseProgress: 0,
+      chassisLiftY: 0,
+      chassisPitchOffsetRad: 0,
+      wheelLateralOffsetM: 0,
+      wheelTiltRad: 0,
+      wrenchSpinRad: 0,
+      wrenchActive: false,
+      showFreshCompound: false,
+      mechanicReachRatio: 0,
+      jackHandleAngleRad: 0.95,
+      lollipopRaised: false,
+    };
+  }
+
+  const elapsed = clamp(totalDuration - pitStopTimer, 0, totalDuration);
+  const progress = Number(clamp(elapsed / totalDuration, 0, 1).toFixed(4));
+  const smoothstep = (t: number) => {
+    const c = clamp(t, 0, 1);
+    return c * c * (3 - 2 * c);
+  };
+
+  let phase: PitStopPhase = 'jacking_up';
+  let phaseLabel = 'CREW DEPLOYING · JACKING CHASSIS';
+  let phaseProgress = 0;
+  let chassisLiftY = 0;
+  let chassisPitchOffsetRad = 0;
+  let wheelLateralOffsetM = 0;
+  let wheelTiltRad = 0;
+  let wrenchActive = false;
+  let showFreshCompound = false;
+  let mechanicReachRatio = 0;
+  let jackHandleAngleRad = 0.95;
+  let lollipopRaised = false;
+
+  if (progress < 0.18) {
+    // Phase 1: Crew rushes in & quick-lift jacks raise the car chassis
+    phase = 'jacking_up';
+    phaseLabel = 'PHASE 1/5 · JACKING CHASSIS';
+    phaseProgress = clamp(progress / 0.18, 0, 1);
+    const s = smoothstep(phaseProgress);
+    mechanicReachRatio = s;
+    chassisLiftY = Number((s * 0.13).toFixed(4));
+    chassisPitchOffsetRad = Number((Math.sin(phaseProgress * Math.PI) * 0.022).toFixed(4));
+    jackHandleAngleRad = Number(((1 - s) * 0.95).toFixed(4));
+  } else if (progress < 0.46) {
+    // Phase 2: Pneumatic guns unfasten Borrani knock-off spinners & mechanics pull old worn tires off hubs
+    phase = 'wheels_off';
+    phaseLabel = 'PHASE 2/5 · REMOVING WORN TIRES';
+    phaseProgress = clamp((progress - 0.18) / 0.28, 0, 1);
+    mechanicReachRatio = 1.0;
+    chassisLiftY = 0.13;
+    jackHandleAngleRad = 0;
+
+    if (phaseProgress < 0.45) {
+      const gunU = phaseProgress / 0.45;
+      wrenchActive = true;
+      wheelLateralOffsetM = Number((gunU * 0.04).toFixed(4));
+      chassisLiftY = Number((0.13 + Math.sin(gunU * Math.PI * 6) * 0.003).toFixed(4));
+    } else {
+      const pullS = smoothstep((phaseProgress - 0.45) / 0.55);
+      wrenchActive = false;
+      wheelLateralOffsetM = Number((0.04 + pullS * 0.34).toFixed(4));
+      wheelTiltRad = Number((pullS * 0.18).toFixed(4));
+    }
+  } else if (progress < 0.66) {
+    // Phase 3: Mechanics lift fresh compound tires and slide them onto the 4 hubs
+    phase = 'wheels_on';
+    phaseLabel = 'PHASE 3/5 · MOUNTING FRESH TIRES';
+    phaseProgress = clamp((progress - 0.46) / 0.20, 0, 1);
+    const pushS = smoothstep(phaseProgress);
+    mechanicReachRatio = 1.0;
+    chassisLiftY = 0.13;
+    jackHandleAngleRad = 0;
+    showFreshCompound = progress >= 0.50;
+    wheelLateralOffsetM = Number((0.38 * (1 - pushS)).toFixed(4));
+    wheelTiltRad = Number((0.18 * (1 - pushS)).toFixed(4));
+  } else if (progress < 0.85) {
+    // Phase 4: Pneumatic impact guns torque-lock the 3-ear knock-off spinners with hub sparks
+    phase = 'torque_lock';
+    phaseLabel = 'PHASE 4/5 · TORQUING WHEEL HUBS';
+    phaseProgress = clamp((progress - 0.66) / 0.19, 0, 1);
+    mechanicReachRatio = 1.0;
+    chassisLiftY = Number((0.13 + Math.sin(phaseProgress * Math.PI * 6) * 0.003).toFixed(4));
+    jackHandleAngleRad = 0;
+    wheelLateralOffsetM = 0;
+    wheelTiltRad = 0;
+    wrenchActive = true;
+    showFreshCompound = true;
+  } else {
+    // Phase 5: Quick-lift jacks drop the car onto its suspension, lollipop raises, engine revs to launch
+    phase = 'dropping_go';
+    phaseLabel = 'PHASE 5/5 · JACKS DOWN — GO! GO!';
+    phaseProgress = clamp((progress - 0.85) / 0.15, 0, 1);
+    const dropS = smoothstep(phaseProgress);
+    chassisLiftY = Number(Math.max(0, 0.13 * (1 - dropS * 1.15)).toFixed(4));
+    chassisPitchOffsetRad = Number((-Math.sin(phaseProgress * Math.PI) * 0.016).toFixed(4));
+    mechanicReachRatio = Number((1.0 - dropS * 0.85).toFixed(4));
+    jackHandleAngleRad = Number((dropS * 0.95).toFixed(4));
+    wheelLateralOffsetM = 0;
+    wheelTiltRad = 0;
+    wrenchActive = false;
+    showFreshCompound = true;
+    lollipopRaised = true;
+  }
+
+  return {
+    active: true,
+    phase,
+    phaseLabel,
+    progress,
+    phaseProgress: Number(phaseProgress.toFixed(4)),
+    chassisLiftY,
+    chassisPitchOffsetRad,
+    wheelLateralOffsetM,
+    wheelTiltRad,
+    wrenchSpinRad: Number((elapsed * 42).toFixed(3)),
+    wrenchActive,
+    showFreshCompound,
+    mechanicReachRatio,
+    jackHandleAngleRad,
+    lollipopRaised,
+  };
+}
+
+/**
+ * Handles Pit Lane Service Box detection and 2.4-second 3D 4-tire swap service in the Pit Lane.
  */
 export function stepPitStopService(
   vehicle: VehiclePhysicsState,
@@ -334,7 +514,11 @@ export function stepPitStopService(
   const tires = vehicle.tires;
   if (!tires) return { pitStopCompleted: false };
 
-  if (inputPitRequest) {
+  if (tires.pitCooldownTimer && tires.pitCooldownTimer > 0) {
+    tires.pitCooldownTimer = Math.max(0, tires.pitCooldownTimer - dt);
+  }
+
+  if (inputPitRequest && (tires.pitCooldownTimer ?? 0) <= 0) {
     tires.pitRequest = true;
   }
 
@@ -351,13 +535,18 @@ export function stepPitStopService(
     vehicle.speedMs = 0;
     vehicle.lateralSpeedMs = 0;
     vehicle.angularVelocity = 0;
-    vehicle.throttle = 0;
-    vehicle.brake = 1;
-    vehicle.rpm = 1800 + Math.sin(tires.pitStopTimer * 18) * 350;
+    vehicle.throttle = tires.pitStopTimer < 0.38 ? 0.65 : 0;
+    vehicle.brake = tires.pitStopTimer < 0.15 ? 0 : 1;
+    // Blip engine revs as jacks drop for pit-lane launch
+    vehicle.rpm =
+      tires.pitStopTimer < 0.38
+        ? 4600 + Math.sin(tires.pitStopTimer * 35) * 650
+        : 1850 + Math.sin(tires.pitStopTimer * 18) * 350;
 
     if (tires.pitStopTimer <= 0) {
       tires.pitStopActive = false;
       tires.pitRequest = false;
+      tires.pitCooldownTimer = 4.0;
       tires.pitStopsCompleted += 1;
       refitFreshTires(tires, tires.nextPitCompound);
       vehicle.nitroCharge = 100;
@@ -372,26 +561,48 @@ export function stepPitStopService(
     return { pitStopCompleted: false };
   }
 
-  // Trigger Pit Stop entry when in Pit Zone and either:
-  // 1) Driver armed pitRequest [B / Pit Button], OR
-  // 2) Driver pulled into the right-side Pit Stall lane (lateralOffset > 1.75m) and slowed below 22 m/s
+  if ((tires.pitCooldownTimer ?? 0) > 0 || vehicle.finished) {
+    return { pitStopCompleted: false };
+  }
+
+  // Trigger Pit Stop entry when:
+  // 1) Driver explicitly triggered a pit stop (vehicle.isPlayer && tires.pitRequest), OR
+  // 2) AI car with armed pitRequest reaches the Start/Finish straight, OR
+  // 3) Driver pulled into the right-side Pit Stall lane (lateralOffset > 1.75m) on the main straight and slowed below 22 m/s
   const pulledIntoRightPitStall =
     onMainStraight &&
     vehicle.lateralOffset > 1.75 &&
     vehicle.speedMs < 22 &&
     (tires.avgTreadLife < 0.88 || tires.minIntegrity < 0.88 || tires.compound !== tires.nextPitCompound);
 
-  if (onMainStraight && !vehicle.finished && (tires.pitRequest || pulledIntoRightPitStall)) {
+  const shouldEnterPitBox =
+    (vehicle.isPlayer && tires.pitRequest) ||
+    (onMainStraight && (tires.pitRequest || pulledIntoRightPitStall));
+
+  if (shouldEnterPitBox) {
+    // If triggered mid-lap by the player, bring the car directly into the Start/Finish Pit Lane Service Box
+    if (!onMainStraight) {
+      const startLookup = findClosestTrackSample(track, 0, 0);
+      const pitIdx = (startLookup.sample.index + 5) % track.samples.length;
+      vehicle.trackSampleIndex = pitIdx;
+      vehicle.lapProgress = track.samples[pitIdx].s;
+    }
     const sample = track.samples[vehicle.trackSampleIndex];
     const pitStallOffset = sample.width * 0.34;
     vehicle.x = sample.x + sample.rx * pitStallOffset;
     vehicle.z = sample.z + sample.rz * pitStallOffset;
+    const exactLookup = findClosestTrackSample(track, vehicle.x, vehicle.z, vehicle.trackSampleIndex);
+    vehicle.y = exactLookup.surfaceY;
+    vehicle.lateralOffset = pitStallOffset;
     vehicle.yaw = Math.atan2(sample.tx, sample.tz);
     vehicle.vx = 0;
     vehicle.vz = 0;
     vehicle.speedMs = 0;
+    vehicle.lateralSpeedMs = 0;
+    vehicle.angularVelocity = 0;
+    tires.inPitZone = true;
     tires.pitStopActive = true;
-    tires.pitStopTimer = 2.0; // 2.0s rapid classic pit crew service
+    tires.pitStopTimer = PIT_STOP_DURATION_SEC; // 2.4s 5-phase 3D classic pit crew tire change sequence
   }
 
   return { pitStopCompleted: false };
@@ -877,6 +1088,7 @@ export function createInitialVehicleState(params: {
     isDrafting: false,
     hitFlashTimer: 0,
     brakeTelegraphTimer: 0,
+    collisionTimer: 0,
     trackSampleIndex: slotSampleIdx,
     lapProgress: sample.s,
     lateralOffset: lateralLane,
@@ -900,6 +1112,15 @@ export function createInitialVehicleState(params: {
     onMarbles: false,
     lineGripModifier: 1.0,
     frontBrakeGlow: 0,
+    redlineTremor: 0,
+    manualGearOverrideTimer: 0,
+    shiftCooldownTimer: 0,
+    styleScore: 0,
+    styleCombo: 1,
+    comboTimer: 0,
+    lastActionBanner: '',
+    lastActionPoints: 0,
+    lastActionTimer: 0,
   };
 }
 
@@ -959,6 +1180,10 @@ export function stepVehiclePhysics(
   if (vehicle.brakeTelegraphTimer > 0) {
     vehicle.brakeTelegraphTimer = Math.max(0, vehicle.brakeTelegraphTimer - dt);
   }
+  if ((vehicle.collisionTimer ?? 0) > 0) {
+    vehicle.collisionTimer = Math.max(0, (vehicle.collisionTimer ?? 0) - dt);
+  }
+  const collisionShockRatio = clamp((vehicle.collisionTimer ?? 0) / 0.35, 0, 1);
 
   // Step Pit Stop Service Box Check (if currently in Pit Stop, vehicle is serviced by pit crew)
   const pitResult = stepPitStopService(vehicle, track, dt, Boolean(input.pitRequest));
@@ -1083,6 +1308,7 @@ export function stepVehiclePhysics(
       // Smooth apex turn-in help when steering into a corner
       tangentGuideSteer = clamp(prevLookup.sample.curvature * 2.8, -0.06, 0.06);
     }
+    tangentGuideSteer *= 1 - collisionShockRatio;
   }
 
   const targetSteer = clamp(
@@ -1173,7 +1399,24 @@ export function stepVehiclePhysics(
 
   vehicle.asphaltGripFactor = Number(surfaceGrip.toFixed(3));
 
-  // 5-speed classic gearbox
+  // Decay manual gear override & gamified style combo timers
+  if ((vehicle.manualGearOverrideTimer ?? 0) > 0) {
+    vehicle.manualGearOverrideTimer = Math.max(0, (vehicle.manualGearOverrideTimer ?? 0) - dt);
+  }
+  if ((vehicle.shiftCooldownTimer ?? 0) > 0) {
+    vehicle.shiftCooldownTimer = Math.max(0, (vehicle.shiftCooldownTimer ?? 0) - dt);
+  }
+  if ((vehicle.lastActionTimer ?? 0) > 0) {
+    vehicle.lastActionTimer = Math.max(0, (vehicle.lastActionTimer ?? 0) - dt);
+  }
+  if ((vehicle.comboTimer ?? 0) > 0) {
+    vehicle.comboTimer = Math.max(0, (vehicle.comboTimer ?? 0) - dt);
+    if (vehicle.comboTimer <= 0) {
+      vehicle.styleCombo = 1;
+    }
+  }
+
+  // 5-speed classic gearbox with Manual Redline Upshift/Downshift + Automatic Transmission
   const gearMaxSpeeds = [
     stats.maxSpeedMs * 0.25,
     stats.maxSpeedMs * 0.43,
@@ -1181,24 +1424,77 @@ export function stepVehiclePhysics(
     stats.maxSpeedMs * 0.82,
     stats.maxSpeedMs * 1.02,
   ];
-  let newGear = 1;
   const absSpeed = Math.abs(forwardVel);
-  for (let g = 0; g < 5; g++) {
-    if (absSpeed > gearMaxSpeeds[g] * 0.86 && g < 4) {
-      newGear = g + 2;
+  let manualShiftTriggered = false;
+
+  if (
+    vehicle.isPlayer &&
+    (vehicle.shiftCooldownTimer ?? 0) <= 0 &&
+    (input.shiftUp || input.shiftDown)
+  ) {
+    if (input.shiftUp && vehicle.gear < 5) {
+      const wasInRedlineZone = vehicle.rpm >= 7000 && vehicle.rpm <= 8450;
+      vehicle.gear += 1;
+      gearChanged = true;
+      manualShiftTriggered = true;
+      vehicle.manualGearOverrideTimer = 4.5;
+      vehicle.shiftCooldownTimer = 0.24;
+      vehicle.rpm = Math.max(4100, vehicle.rpm - 2050);
+
+      if (wasInRedlineZone) {
+        // Perfect Redline Upshift! Award speed surge, nitro boost & gamified style points
+        forwardVel = Math.min(stats.maxSpeedMs * 1.06, forwardVel + 2.35);
+        vehicle.nitroCharge = Math.min(100, (vehicle.nitroCharge ?? 0) + 12);
+        awardDriverMasteryAction(vehicle, 'PERFECT REDLINE SHIFT', 250);
+      }
+    } else if (input.shiftDown && vehicle.gear > 1) {
+      vehicle.gear -= 1;
+      gearChanged = true;
+      manualShiftTriggered = true;
+      vehicle.manualGearOverrideTimer = 4.5;
+      vehicle.shiftCooldownTimer = 0.24;
+      // Heel-and-toe downshift rev blip
+      vehicle.rpm = clamp(vehicle.rpm + 1650, 2800, 8250);
     }
   }
-  if (newGear !== vehicle.gear) {
-    gearChanged = true;
-    vehicle.gear = newGear;
+
+  if (!manualShiftTriggered) {
+    // If manual override is active, only auto-downshift on stall or auto-upshift at extreme rev limiter
+    const isManualHold = (vehicle.manualGearOverrideTimer ?? 0) > 0;
+    // Hold gears slightly deeper into the 7100..7950 RPM redline band under throttle so the driver
+    // feels the authentic redline tremor and has a window to trigger a Manual Perfect Upshift [E]
+    const upshiftRatio = isManualHold ? 0.995 : vehicle.isPlayer ? 0.935 : 0.88;
+    let newGear = 1;
+    for (let g = 0; g < 5; g++) {
+      if (absSpeed > gearMaxSpeeds[g] * upshiftRatio && g < 4) {
+        newGear = g + 2;
+      }
+    }
+    if (isManualHold) {
+      const minSafeFloor = vehicle.gear > 1 ? gearMaxSpeeds[vehicle.gear - 2] * 0.52 : 0;
+      if (absSpeed < minSafeFloor && vehicle.gear > 1) {
+        vehicle.gear -= 1;
+        gearChanged = true;
+      } else if (absSpeed > gearMaxSpeeds[vehicle.gear - 1] * 1.01 && vehicle.gear < 5) {
+        vehicle.gear += 1;
+        gearChanged = true;
+      }
+    } else if (newGear !== vehicle.gear) {
+      gearChanged = true;
+      vehicle.gear = newGear;
+    }
   }
 
-  const gearFloor = vehicle.gear === 1 ? 0 : gearMaxSpeeds[vehicle.gear - 2] * 0.68;
+  const gearFloor = vehicle.gear === 1 ? 0 : gearMaxSpeeds[vehicle.gear - 2] * 0.66;
   const gearCeil = gearMaxSpeeds[vehicle.gear - 1];
-  const gearProgress = clamp((absSpeed - gearFloor) / Math.max(1, gearCeil - gearFloor), 0, 1);
-  const targetRpm =
-    1450 + gearProgress * 6650 + vehicle.throttle * 380 + (vehicle.isBoosting ? 420 : 0);
+  const gearProgress = clamp((absSpeed - gearFloor) / Math.max(1, gearCeil - gearFloor), 0, 1.06);
+  const targetRpm = clamp(
+    1450 + gearProgress * 6550 + vehicle.throttle * 420 + (vehicle.isBoosting ? 420 : 0),
+    1150,
+    8450
+  );
   vehicle.rpm += (targetRpm - vehicle.rpm) * Math.min(1, dt * 16);
+  vehicle.redlineTremor = computeRedlineTremor(vehicle.rpm, vehicle.gear);
 
   const rpmNorm = (vehicle.rpm - 1200) / 7000;
   const torqueCurve = 0.82 + Math.sin(clamp(rpmNorm, 0.05, 0.98) * Math.PI) * 0.34;
@@ -1324,8 +1620,9 @@ export function stepVehiclePhysics(
 
   const isCounterSteering =
     vehicle.slipAngleRad * vehicle.steerAngle < -0.01 && Math.abs(vehicle.slipAngleRad) > 0.07;
-  // Strong yaw stability damping prevents snap spinouts and makes catching slides effortless
-  const yawDamping = isCounterSteering ? 30 : Math.abs(rawSteer) < 0.05 ? 23 : isAssisted ? 18 : 15;
+  // Strong yaw stability damping during normal driving; relaxed briefly during collision shock so physical impacts rotate the chassis naturally
+  const baseYawDamping = isCounterSteering ? 30 : Math.abs(rawSteer) < 0.05 ? 23 : isAssisted ? 18 : 15;
+  const yawDamping = baseYawDamping * (1 - collisionShockRatio * 0.72);
   vehicle.angularVelocity +=
     (targetAngularVel - vehicle.angularVelocity) * Math.min(1, dt * yawDamping);
   vehicle.yaw = normalizeAngle(vehicle.yaw + vehicle.angularVelocity * dt);
@@ -1345,7 +1642,8 @@ export function stepVehiclePhysics(
       ? 1.08
       : Math.max(isAssisted ? 0.82 : 0.74, 1.08 - (absSlip - 0.16) * (isAssisted ? 0.48 : 0.65));
   const handbrakeLateralGrip = vehicle.handbrake ? 0.26 : pacejkaGripFactor;
-  const lateralGripDamping = stats.cornerStiffness * surfaceGrip * handbrakeLateralGrip;
+  const lateralGripDamping =
+    stats.cornerStiffness * surfaceGrip * handbrakeLateralGrip * (1 - collisionShockRatio * 0.58);
   lateralVel *= Math.exp(-lateralGripDamping * dt);
 
   // Lateral gravity component on banked corners & crowned asphalt pulls car toward the inside of banked turns
@@ -1395,49 +1693,158 @@ export function stepVehiclePhysics(
   vehicle.x += vehicle.vx * dt;
   vehicle.z += vehicle.vz * dt;
 
-  // Query exact interpolated track surface & Smooth Tangent-Projected Armco Guardrail Collision
+  // Query exact interpolated track surface & Realistic 4-Corner Oriented Bounding Box (OBB) Armco Guardrail Collision
   const currLookup = findClosestTrackSample(track, vehicle.x, vehicle.z, prevLookup.sample.index);
   const sample = currLookup.sample;
 
-  const barrierLimit = sample.width * 0.5 + 1.18;
-  if (Math.abs(currLookup.lateralOffset) > barrierLimit) {
-    const sign = Math.sign(currLookup.lateralOffset);
-    // Keep 3cm inward clearance inside barrierLimit so car never re-snags on the next frame
-    const clampedOffset = sign * (barrierLimit - 0.03);
-    vehicle.x = currLookup.interpX + currLookup.rx * clampedOffset;
-    vehicle.z = currLookup.interpZ + currLookup.rz * clampedOffset;
+  const halfLen = 2.06;
+  const halfWid = 0.90;
+  const cornerBarrierLimit = sample.width * 0.5 + 1.82;
+  const centerBarrierLimit = sample.width * 0.5 + 1.15;
 
-    wallContactX = currLookup.interpX + currLookup.rx * (sign * (barrierLimit + 0.55));
-    wallContactZ = currLookup.interpZ + currLookup.rz * (sign * (barrierLimit + 0.55));
+  let maxPenetration = 0;
+  let penSign = 0;
+  let hitCornerLon = 0;
+  let hitCornerLat = 0;
+
+  const cornerOffsets: ReadonlyArray<readonly [number, number]> = [
+    [halfLen, -halfWid],
+    [halfLen, halfWid],
+    [-halfLen, -halfWid],
+    [-halfLen, halfWid],
+  ];
+
+  for (let c = 0; c < 4; c++) {
+    const cLon = cornerOffsets[c][0];
+    const cLat = cornerOffsets[c][1];
+    const worldDx = newFx * cLon + newRx * cLat;
+    const worldDz = newFz * cLon + newRz * cLat;
+    const cornerLateral =
+      currLookup.lateralOffset + worldDx * currLookup.rx + worldDz * currLookup.rz;
+    const pen = Math.abs(cornerLateral) - cornerBarrierLimit;
+    if (pen > maxPenetration) {
+      maxPenetration = pen;
+      penSign = Math.sign(cornerLateral);
+      hitCornerLon = cLon;
+      hitCornerLat = cLat;
+    }
+  }
+
+  const centerPen = Math.abs(currLookup.lateralOffset) - centerBarrierLimit;
+  if (centerPen > maxPenetration) {
+    maxPenetration = centerPen;
+    penSign = Math.sign(currLookup.lateralOffset);
+    hitCornerLon = 0;
+    hitCornerLat = penSign * halfWid;
+  }
+
+  if (maxPenetration > 0 && penSign !== 0) {
+    // Push vehicle inward along barrier normal with 3cm clearance so it never snags on the next step
+    const pushInward = maxPenetration + 0.03;
+    const newLateralOffset = currLookup.lateralOffset - penSign * pushInward;
+    currLookup.lateralOffset = newLateralOffset;
+    vehicle.x = currLookup.interpX + currLookup.rx * newLateralOffset;
+    vehicle.z = currLookup.interpZ + currLookup.rz * newLateralOffset;
+
+    const contactWorldDx = newFx * hitCornerLon + newRx * hitCornerLat;
+    const contactWorldDz = newFz * hitCornerLon + newRz * hitCornerLat;
+    wallContactX = vehicle.x + contactWorldDx;
+    wallContactZ = vehicle.z + contactWorldDz;
+
+    // Velocity of the impacting corner (including rotational velocity v + omega x r)
+    const cornerVx = vehicle.vx + vehicle.angularVelocity * contactWorldDz;
+    const cornerVz = vehicle.vz - vehicle.angularVelocity * contactWorldDx;
 
     const vTang = vehicle.vx * currLookup.tx + vehicle.vz * currLookup.tz;
-    const vNorm = vehicle.vx * currLookup.rx + vehicle.vz * currLookup.rz;
+    const vNormCenter = vehicle.vx * currLookup.rx + vehicle.vz * currLookup.rz;
+    const vNormCorner = cornerVx * currLookup.rx + cornerVz * currLookup.rz;
+    const effectiveOutwardVel = Math.max(vNormCenter * penSign, vNormCorner * penSign);
 
-    if (vNorm * sign > -0.1) {
-      wallImpactSpeedMs = Math.max(0, vNorm * sign);
+    if (effectiveOutwardVel > -0.15) {
+      wallImpactSpeedMs = Math.max(0, effectiveOutwardVel);
       wallScrapeSpeedMs = Math.abs(vTang);
 
-      const impactRatio = clamp(wallImpactSpeedMs / Math.max(1, vehicle.speedMs), 0, 1);
-      // Gentle inward push away from barrier + smooth tangential glide
-      const bouncedNorm = -sign * Math.max(0.85, wallImpactSpeedMs * 0.16);
-      const frictionLoss = clamp(1.0 - (0.015 + impactRatio * 0.075), 0.90, 0.988);
-      const retainedTang = vTang * frictionLoss;
+      const totalSpeed = Math.max(1.0, vehicle.speedMs);
+      const sinImpactAngle = clamp(wallImpactSpeedMs / totalSpeed, 0, 1);
+
+      // Authentic metallic Armco barrier restitution (higher rebound on steeper impacts)
+      const restitution = 0.28 + sinImpactAngle * 0.12;
+      const reboundSpeed = Math.max(0.85, wallImpactSpeedMs * restitution);
+      const bouncedNorm = -penSign * reboundSpeed;
+
+      // Coulomb wall friction & structural crumple energy dissipation:
+      // Shallow grazing scrapes lose modest speed; steep/head-on hits scrub significant speed
+      const normalDeltaV = wallImpactSpeedMs + reboundSpeed;
+      const wallMu = 0.42;
+      const coulombSpeedDrop = normalDeltaV * wallMu * (0.45 + 0.55 * sinImpactAngle);
+      const angleEnergyLoss = Math.abs(vTang) * (0.04 + sinImpactAngle * sinImpactAngle * 0.46);
+      const totalTangDrop = coulombSpeedDrop + angleEnergyLoss;
+      const newTangSpeed = Math.max(0, Math.abs(vTang) - totalTangDrop);
+      const retainedTang = Math.sign(vTang) * newTangSpeed;
 
       vehicle.vx = currLookup.tx * retainedTang + currLookup.rx * bouncedNorm;
       vehicle.vz = currLookup.tz * retainedTang + currLookup.rz * bouncedNorm;
       vehicle.speedMs = Math.hypot(vehicle.vx, vehicle.vz);
-      vehicle.hitFlashTimer = 0.06;
+      vehicle.hitFlashTimer = 0.09;
+      vehicle.collisionTimer = Math.max(
+        vehicle.collisionTimer ?? 0,
+        clamp(0.14 + wallImpactSpeedMs * 0.018, 0.14, 0.40)
+      );
 
-      // Smoothly align vehicle heading parallel to the interpolated guardrail tangent so nose never digs in
+      // Corner lever-arm yaw torque: hitting nose-first kicks the nose back inward away from the wall;
+      // hitting tail-first kicks the tail inward
+      const normalX = -penSign * currLookup.rx;
+      const normalZ = -penSign * currLookup.rz;
+      const leverTorque = contactWorldDz * normalX - contactWorldDx * normalZ;
+      const yawImpulse = clamp(
+        leverTorque * normalDeltaV * 0.058,
+        -2.6,
+        2.6
+      );
+      vehicle.angularVelocity = clamp(
+        vehicle.angularVelocity * (1 - sinImpactAngle * 0.45) + yawImpulse,
+        -3.2,
+        3.2
+      );
+
+      // Partial heading deflection from barrier contact without robotic instant snapping
       const trackYaw = Math.atan2(currLookup.tx, currLookup.tz);
       const yawDiff = normalizeAngle(trackYaw - vehicle.yaw);
-      vehicle.yaw = normalizeAngle(vehicle.yaw + yawDiff * (0.60 + impactRatio * 0.25));
-      vehicle.angularVelocity *= 0.18;
+      vehicle.yaw = normalizeAngle(
+        vehicle.yaw + yawDiff * clamp(0.16 + sinImpactAngle * 0.24, 0.16, 0.40)
+      );
+
+      // Physical suspension jolt & body roll/pitch impulse from barrier impact
+      const impactJolt = clamp(wallImpactSpeedMs / 22, 0.08, 1.0);
+      vehicle.rollRad = clamp(vehicle.rollRad - penSign * impactJolt * 0.055, -0.14, 0.14);
+      vehicle.pitchRad = clamp(
+        vehicle.pitchRad - Math.sign(hitCornerLon || 1) * impactJolt * 0.032,
+        -0.09,
+        0.09
+      );
+      vehicle.suspensionOffsetM = clamp(
+        (vehicle.suspensionOffsetM ?? 0) - impactJolt * 0.024,
+        -0.06,
+        0.05
+      );
+
+      // Scrubbing or slamming the barrier heats and wears the outside tires
+      if (vehicle.tires) {
+        const outsideFront = penSign > 0 ? vehicle.tires.fr : vehicle.tires.fl;
+        const outsideRear = penSign > 0 ? vehicle.tires.rr : vehicle.tires.rl;
+        const targetTire = hitCornerLon >= 0 ? outsideFront : outsideRear;
+        targetTire.temperature = clamp(targetTire.temperature + wallImpactSpeedMs * 0.35, 35, 145);
+        targetTire.structuralIntegrity = clamp(
+          targetTire.structuralIntegrity - wallImpactSpeedMs * 0.0012,
+          0.25,
+          1.0
+        );
+      }
     }
   }
 
-  // Exact road surface height locking (zero floating gap) + 3D Suspension Heave Compression Dynamics
-  const finalLookup = findClosestTrackSample(track, vehicle.x, vehicle.z, sample.index);
+  // Exact road surface height locking (reuse currLookup directly to avoid a redundant 3rd spline search)
+  const finalLookup = currLookup;
   const prevSurfaceY = prevLookup.surfaceY;
   vehicle.y = finalLookup.surfaceY;
   wallContactY = vehicle.y + 0.42;
@@ -1500,10 +1907,25 @@ export function stepVehiclePhysics(
     vehicle.maxSReachedThisLap = newS;
     lapCompleted = true;
 
+    if (vehicle.isPlayer) {
+      awardDriverMasteryAction(vehicle, 'CLEAN LAP COMPLETED', 400);
+    }
+
     if (vehicle.lap > track.laps && !vehicle.finished) {
       vehicle.finished = true;
       vehicle.finishTimeMs = raceElapsedMs;
       raceFinished = true;
+    }
+  }
+
+  // Continuous style mastery accumulation for high-speed four-wheel drifts & slipstream drafting
+  if (vehicle.isPlayer && !vehicle.isOffTrack) {
+    if (vehicle.isDrifting && vehicle.speedMs > 16) {
+      vehicle.styleScore = (vehicle.styleScore ?? 0) + Math.round(vehicle.speedMs * dt * 2.2);
+      vehicle.comboTimer = Math.max(vehicle.comboTimer ?? 0, 2.5);
+    } else if (vehicle.isDrafting && vehicle.speedMs > 28) {
+      vehicle.styleScore = (vehicle.styleScore ?? 0) + Math.round(vehicle.speedMs * dt * 1.4);
+      vehicle.comboTimer = Math.max(vehicle.comboTimer ?? 0, 2.0);
     }
   }
 
@@ -1673,10 +2095,18 @@ export function computeAIControls(
   };
 }
 
+const VEHICLE_MASS_BY_SPEC: Record<string, number> = {
+  aurelia_250_gto: 900,
+  coventry_etype_lw: 945,
+  stuttgart_911s_rs: 830,
+  dearborn_gt40_mk2: 1080,
+};
+
 /**
- * 3-Sphere Longitudinal Capsule (Front + Center + Rear) Car-to-Car Collision Resolution.
- * Matches exact 1.84m car width (`sphereRadius = 0.92m`) with smooth door-to-door rubbing
- * separation and dampened yaw impulse so side-by-side racing never snags or spins out unfairly.
+ * 3-Sphere Longitudinal Capsule (Front + Center + Rear) Rigid-Body Car-to-Car Collision Resolution.
+ * Uses authentic vehicle masses, yaw moments of inertia, contact-point rotational velocities,
+ * normal restitution + Coulomb tangential friction impulses, lever-arm yaw torque (PIT maneuvers /
+ * corner bumps), and suspension roll/pitch jolt transfer.
  */
 export function resolveMultiVehicleInteractions(
   vehicles: VehiclePhysicsState[],
@@ -1689,7 +2119,7 @@ export function resolveMultiVehicleInteractions(
   const collisionContacts: Array<{ x: number; y: number; z: number; impactSpeedMs: number }> = [];
   const sphereRadius = 0.92;
   const minDist = sphereRadius * 2; // 1.84m exact car body width
-  const sphereOffsets = [-1.18, 0.0, 1.18];
+  const sphereOffsets = [-1.22, 0.0, 1.22];
 
   for (const v of vehicles) {
     v.isDrafting = false;
@@ -1716,15 +2146,13 @@ export function resolveMultiVehicleInteractions(
         }
       }
 
-      if (j > i && centerDist < 4.5) {
+      if (j > i && centerDist < 4.65) {
         const bfx = Math.sin(b.yaw);
         const bfz = Math.cos(b.yaw);
 
         let deepestOverlap = 0;
         let bestNx = 0;
         let bestNz = 0;
-        let bestOffsetA = 0;
-        let bestOffsetB = 0;
         let contactX = (a.x + b.x) * 0.5;
         let contactZ = (a.z + b.z) * 0.5;
 
@@ -1743,8 +2171,6 @@ export function resolveMultiVehicleInteractions(
                 deepestOverlap = overlap;
                 bestNx = sdx / sDist;
                 bestNz = sdz / sDist;
-                bestOffsetA = offA;
-                bestOffsetB = offB;
                 contactX = (ax + bx) * 0.5;
                 contactZ = (az + bz) * 0.5;
               }
@@ -1753,53 +2179,125 @@ export function resolveMultiVehicleInteractions(
         }
 
         if (deepestOverlap > 0) {
-          // Separate cleanly with a 2cm margin so capsules never stay stuck across frames
-          const sepDist = (deepestOverlap + 0.02) * 0.52;
-          a.x -= bestNx * sepDist;
-          a.z -= bestNz * sepDist;
-          b.x += bestNx * sepDist;
-          b.z += bestNz * sepDist;
+          const massA = VEHICLE_MASS_BY_SPEC[a.carSpecId] ?? 920;
+          const massB = VEHICLE_MASS_BY_SPEC[b.carSpecId] ?? 920;
+          const invMassA = 1 / massA;
+          const invMassB = 1 / massB;
+          const totalInvMass = invMassA + invMassB;
 
-          const rvx = b.vx - a.vx;
-          const rvz = b.vz - a.vz;
+          // Separate positions inversely proportional to mass with a 2.5cm margin
+          const totalSep = deepestOverlap + 0.025;
+          const sepA = totalSep * (invMassA / totalInvMass);
+          const sepB = totalSep * (invMassB / totalInvMass);
+          a.x -= bestNx * sepA;
+          a.z -= bestNz * sepA;
+          b.x += bestNx * sepB;
+          b.z += bestNz * sepB;
+
+          // Contact lever arms from each vehicle's center of mass
+          const rAx = contactX - a.x;
+          const rAz = contactZ - a.z;
+          const rBx = contactX - b.x;
+          const rBz = contactZ - b.z;
+
+          // Contact-point velocities including angular velocity (v_p = v_cm + omega x r)
+          const vAx = a.vx + a.angularVelocity * rAz;
+          const vAz = a.vz - a.angularVelocity * rAx;
+          const vBx = b.vx + b.angularVelocity * rBz;
+          const vBz = b.vz - b.angularVelocity * rBx;
+
+          const rvx = vBx - vAx;
+          const rvz = vBz - vAz;
           const relNormalVel = rvx * bestNx + rvz * bestNz;
 
           const tangX = -bestNz;
           const tangZ = bestNx;
           const relTangVel = rvx * tangX + rvz * tangZ;
 
-          if (relNormalVel < 0.8) {
+          if (relNormalVel < 0.85) {
             const closingSpeed = Math.max(0, -relNormalVel);
-            const restitution = 0.28;
-            // Ensure a minimum gentle separation velocity (0.65 m/s) so side-by-side cars unstick cleanly
-            const impulse = Math.max(0.65, (1 + restitution) * closingSpeed * 0.5);
-            const frictionImpulse = clamp(relTangVel * 0.08, -impulse * 0.22, impulse * 0.22);
+            const restitution = closingSpeed > 3.0 ? 0.38 : 0.28;
 
-            a.vx -= bestNx * impulse - tangX * frictionImpulse;
-            a.vz -= bestNz * impulse - tangZ * frictionImpulse;
-            b.vx += bestNx * impulse - tangX * frictionImpulse;
-            b.vz += bestNz * impulse - tangZ * frictionImpulse;
+            // Yaw moment of inertia for a ~1.84m x 4.22m historic GT coupe
+            const inertiaA = massA * 1.76;
+            const inertiaB = massB * 1.76;
+            const invInertiaA = 1 / inertiaA;
+            const invInertiaB = 1 / inertiaB;
+
+            // Rotational lever-arm cross terms along contact normal
+            const rnA = rAz * bestNx - rAx * bestNz;
+            const rnB = rBz * bestNx - rBx * bestNz;
+            const effectiveInvMass =
+              totalInvMass + rnA * rnA * invInertiaA + rnB * rnB * invInertiaB;
+
+            const targetDeltaVn = Math.max(1.15, (1 + restitution) * closingSpeed);
+            const normalImpulseMag = targetDeltaVn / effectiveInvMass;
+
+            // Coulomb tangential friction impulse between rubbing bodywork / tires
+            const rtA = rAz * tangX - rAx * tangZ;
+            const rtB = rBz * tangX - rBx * tangZ;
+            const effectiveInvMassTang =
+              totalInvMass + rtA * rtA * invInertiaA + rtB * rtB * invInertiaB;
+            const maxFrictionImpulse = normalImpulseMag * 0.32;
+            const tangImpulseMag = clamp(
+              (-relTangVel / effectiveInvMassTang) * 0.45,
+              -maxFrictionImpulse,
+              maxFrictionImpulse
+            );
+
+            const impulseX = bestNx * normalImpulseMag + tangX * tangImpulseMag;
+            const impulseZ = bestNz * normalImpulseMag + tangZ * tangImpulseMag;
+
+            // Linear momentum transfer (F*dt / m)
+            a.vx -= impulseX * invMassA;
+            a.vz -= impulseZ * invMassA;
+            b.vx += impulseX * invMassB;
+            b.vz += impulseZ * invMassB;
 
             a.speedMs = Math.hypot(a.vx, a.vz);
             b.speedMs = Math.hypot(b.vx, b.vz);
 
-            const crossA = afx * bestNz - afz * bestNx;
-            const crossB = bfx * bestNz - bfz * bestNx;
+            // Rotational impulse transfer (r x J / I_yaw) so offset bumper taps & PIT contacts rotate cars realistically
+            const torqueImpulseA = rAz * impulseX - rAx * impulseZ;
+            const torqueImpulseB = rBz * impulseX - rBx * impulseZ;
             a.angularVelocity = clamp(
-              a.angularVelocity - crossA * bestOffsetA * impulse * 0.014,
-              -1.4,
-              1.4
+              a.angularVelocity - torqueImpulseA * invInertiaA * 0.85,
+              -3.2,
+              3.2
             );
             b.angularVelocity = clamp(
-              b.angularVelocity + crossB * bestOffsetB * impulse * 0.014,
-              -1.4,
-              1.4
+              b.angularVelocity + torqueImpulseB * invInertiaB * 0.85,
+              -3.2,
+              3.2
             );
 
-            const impactMag = closingSpeed + Math.abs(relTangVel) * 0.15;
-            if (impactMag > 1.2) {
-              a.hitFlashTimer = 0.06;
-              b.hitFlashTimer = 0.06;
+            const impactMag = closingSpeed + Math.abs(relTangVel) * 0.22;
+            const shockDuration = clamp(0.12 + impactMag * 0.018, 0.12, 0.38);
+            a.collisionTimer = Math.max(a.collisionTimer ?? 0, shockDuration);
+            b.collisionTimer = Math.max(b.collisionTimer ?? 0, shockDuration);
+
+            // Transfer physical suspension body roll & pitch jolt on impact
+            const joltScale = clamp(impactMag / 18, 0.06, 1.0);
+            const arx = afz;
+            const arz = -afx;
+            const brx = bfz;
+            const brz = -bfx;
+            const latDotA = bestNx * arx + bestNz * arz;
+            const lonDotA = bestNx * afx + bestNz * afz;
+            const latDotB = bestNx * brx + bestNz * brz;
+            const lonDotB = bestNx * bfx + bestNz * bfz;
+
+            a.rollRad = clamp(a.rollRad - latDotA * joltScale * 0.055, -0.14, 0.14);
+            a.pitchRad = clamp(a.pitchRad + lonDotA * joltScale * 0.035, -0.09, 0.09);
+            a.suspensionOffsetM = clamp((a.suspensionOffsetM ?? 0) - joltScale * 0.02, -0.05, 0.04);
+
+            b.rollRad = clamp(b.rollRad + latDotB * joltScale * 0.055, -0.14, 0.14);
+            b.pitchRad = clamp(b.pitchRad - lonDotB * joltScale * 0.035, -0.09, 0.09);
+            b.suspensionOffsetM = clamp((b.suspensionOffsetM ?? 0) - joltScale * 0.02, -0.05, 0.04);
+
+            if (impactMag > 1.0) {
+              a.hitFlashTimer = 0.09;
+              b.hitFlashTimer = 0.09;
               collisionContacts.push({
                 x: contactX,
                 y: Math.max(a.y, b.y) + 0.42,
@@ -1830,8 +2328,252 @@ export function getSortedStandings(vehicles: VehiclePhysicsState[]): VehiclePhys
   });
 }
 
-export function calculateRaceRewardCredits(position: number, cleanLapBonus: boolean): number {
+export function calculateRaceRewardCredits(
+  position: number,
+  cleanLapBonus: boolean,
+  styleScore = 0
+): number {
   const basePayouts = [2800, 1900, 1350, 900];
   const base = basePayouts[clamp(position - 1, 0, 3)] ?? 900;
-  return base + (cleanLapBonus ? 400 : 0);
+  const styleBonus = Math.min(1200, Math.round(styleScore * 0.25));
+  return base + (cleanLapBonus ? 400 : 0) + styleBonus;
 }
+
+/**
+ * Generates deterministic breakable trackside props (straw hay bales, apex marker cones,
+ * and wooden chicane boards) along the circuit's corner verges and chicanes so drivers
+ * can clip or smash through them with 3D physical debris & gamified style points.
+ */
+export function createTrackBreakableProps(track: TrackSpec): BreakablePropState[] {
+  const props: BreakablePropState[] = [];
+  const samples = track.samples;
+  const n = samples.length;
+
+  for (let i = 15; i < n - 15; i += 5) {
+    const s = samples[i];
+    const absCurv = Math.abs(s.curvature);
+    const curveSign = Math.sign(s.curvature || (i % 20 === 0 ? 1 : -1));
+    const roadHalfW = s.width * 0.5;
+    const yaw = Math.atan2(s.tx, s.tz);
+
+    // 1. Inside-apex striped marker cones right on the kerb shoulder
+    if ((absCurv >= 0.0035 || i % 30 === 0) && i % 10 === 0) {
+      const insideSide = curveSign >= 0 ? -1 : 1;
+      const lat = insideSide * (roadHalfW + 0.36);
+      const px = s.x + s.rx * lat;
+      const pz = s.z + s.rz * lat;
+      props.push({
+        id: `cone-${i}`,
+        type: 'apex_cone',
+        baseX: px,
+        baseY: s.y,
+        baseZ: pz,
+        baseYaw: yaw,
+        x: px,
+        y: s.y,
+        z: pz,
+        yaw,
+        pitch: 0,
+        roll: 0,
+        vx: 0,
+        vy: 0,
+        vz: 0,
+        rx: 0,
+        ry: 0,
+        rz: 0,
+        radius: 0.45,
+        broken: false,
+        respawnTimer: 0,
+        points: 100,
+        label: 'APEX CONE CLIP',
+      });
+    }
+
+    // 2. Outside-verge frangible golden straw hay bales
+    if ((absCurv >= 0.0035 || i % 30 === 0) && i % 15 === 0) {
+      const outsideSide = curveSign >= 0 ? 1 : -1;
+      const lat = outsideSide * (roadHalfW + 0.78);
+      const px = s.x + s.rx * lat;
+      const pz = s.z + s.rz * lat;
+      props.push({
+        id: `hay-${i}`,
+        type: 'hay_bale',
+        baseX: px,
+        baseY: s.y,
+        baseZ: pz,
+        baseYaw: yaw + 0.15,
+        x: px,
+        y: s.y,
+        z: pz,
+        yaw: yaw + 0.15,
+        pitch: 0,
+        roll: 0,
+        vx: 0,
+        vy: 0,
+        vz: 0,
+        rx: 0,
+        ry: 0,
+        rz: 0,
+        radius: 0.72,
+        broken: false,
+        respawnTimer: 0,
+        points: 150,
+        label: 'HAY BALE SMASH',
+      });
+    }
+
+    // 3. Wooden chicane chevron marker boards on corner entries
+    if ((absCurv >= 0.0045 || i % 50 === 0) && i % 25 === 0) {
+      const outsideSide = curveSign >= 0 ? 1 : -1;
+      const lat = outsideSide * (roadHalfW + 0.65);
+      const px = s.x + s.rx * lat;
+      const pz = s.z + s.rz * lat;
+      props.push({
+        id: `sign-${i}`,
+        type: 'chicane_sign',
+        baseX: px,
+        baseY: s.y,
+        baseZ: pz,
+        baseYaw: yaw,
+        x: px,
+        y: s.y,
+        z: pz,
+        yaw,
+        pitch: 0,
+        roll: 0,
+        vx: 0,
+        vy: 0,
+        vz: 0,
+        rx: 0,
+        ry: 0,
+        rz: 0,
+        radius: 0.65,
+        broken: false,
+        respawnTimer: 0,
+        points: 200,
+        label: 'CHICANE BOARD SMASH',
+      });
+    }
+  }
+
+  return props;
+}
+
+/**
+ * Advances breakable trackside props, checking for vehicle impacts, launching struck props
+ * into tumbling 3D ballistic trajectories, and awarding gamified style points to the player.
+ */
+export function stepBreakableProps(
+  props: BreakablePropState[],
+  vehicles: VehiclePhysicsState[],
+  dt: number
+): Array<{
+  prop: BreakablePropState;
+  vehicle: VehiclePhysicsState;
+  x: number;
+  y: number;
+  z: number;
+  type: BreakablePropType;
+}> {
+  const brokenEvents: Array<{
+    prop: BreakablePropState;
+    vehicle: VehiclePhysicsState;
+    x: number;
+    y: number;
+    z: number;
+    type: BreakablePropType;
+  }> = [];
+
+  const carHitRadius = 1.15;
+
+  for (let i = 0; i < props.length; i++) {
+    const p = props[i];
+    if (p.broken) {
+      p.respawnTimer -= dt;
+      if (p.respawnTimer <= 0) {
+        p.broken = false;
+        p.x = p.baseX;
+        p.y = p.baseY;
+        p.z = p.baseZ;
+        p.yaw = p.baseYaw;
+        p.pitch = 0;
+        p.roll = 0;
+        p.vx = 0;
+        p.vy = 0;
+        p.vz = 0;
+        p.rx = 0;
+        p.ry = 0;
+        p.rz = 0;
+        continue;
+      }
+
+      // Ballistic 3D flight + ground bounce for broken prop
+      p.vy -= 18.5 * dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.z += p.vz * dt;
+      p.yaw += p.ry * dt;
+      p.pitch += p.rx * dt;
+      p.roll += p.rz * dt;
+
+      if (p.y < p.baseY) {
+        p.y = p.baseY;
+        p.vy = Math.abs(p.vy) * 0.36;
+        p.vx *= 0.72;
+        p.vz *= 0.72;
+        p.rx *= 0.75;
+        p.ry *= 0.75;
+        p.rz *= 0.75;
+      }
+      continue;
+    }
+
+    for (let vIdx = 0; vIdx < vehicles.length; vIdx++) {
+      const v = vehicles[vIdx];
+      if (v.speedMs < 2.5) continue;
+      const dx = p.x - v.x;
+      const dz = p.z - v.z;
+      const minDist = p.radius + carHitRadius;
+      if (dx * dx + dz * dz <= minDist * minDist) {
+        p.broken = true;
+        p.respawnTimer = 14.0;
+
+        const impactSpeed = Math.max(8, v.speedMs);
+        const dirLen = Math.max(0.01, Math.hypot(dx, dz));
+        const nx = dx / dirLen;
+        const nz = dz / dirLen;
+
+        p.vx = v.vx * 0.88 + nx * impactSpeed * 0.42;
+        p.vy = 4.2 + Math.min(7.5, impactSpeed * 0.16);
+        p.vz = v.vz * 0.88 + nz * impactSpeed * 0.42;
+        p.rx = ( nx * 6.5) + 4.2;
+        p.ry = (nz * 5.2);
+        p.rz = (-nx * 5.8);
+
+        // Frangible impact scrubs only ~1.8% speed and gives a crisp suspension tactile pulse
+        v.vx *= 0.982;
+        v.vz *= 0.982;
+        v.speedMs = Math.hypot(v.vx, v.vz);
+        v.suspensionOffsetM = clamp((v.suspensionOffsetM ?? 0) - 0.014, -0.05, 0.04);
+
+        if (v.isPlayer) {
+          awardDriverMasteryAction(v, p.label, p.points);
+          v.nitroCharge = Math.min(100, (v.nitroCharge ?? 0) + 6);
+        }
+
+        brokenEvents.push({
+          prop: p,
+          vehicle: v,
+          x: p.baseX,
+          y: p.baseY + 0.35,
+          z: p.baseZ,
+          type: p.type,
+        });
+        break;
+      }
+    }
+  }
+
+  return brokenEvents;
+}
+

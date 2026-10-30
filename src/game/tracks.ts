@@ -569,7 +569,7 @@ export function findClosestTrackSample(
   let bestDistSq = Infinity;
 
   if (hintIndex >= 0 && hintIndex < n) {
-    const windowRadius = 35;
+    const windowRadius = 16;
     for (let offset = -windowRadius; offset <= windowRadius; offset++) {
       const idx = (hintIndex + offset + n) % n;
       const s = samples[idx];

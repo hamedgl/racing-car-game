@@ -1,6 +1,8 @@
 import * as THREE from 'three';
-import { TrackRubberState, TrackSpec, WeatherState } from './types';
+import { BreakablePropState, TrackRubberState, TrackSpec, WeatherState } from './types';
 import { findClosestTrackSample } from './tracks';
+import { createTrackBreakableProps } from './physics';
+import { TREE_CANOPY_SECTORS, TUNNEL_GALLERY_SECTORS } from './cockpitLighting';
 
 export interface ParticlePool {
   mesh: THREE.InstancedMesh;
@@ -29,6 +31,8 @@ export interface TrackEnvironmentRig {
   racingLineMat: THREE.MeshStandardMaterial;
   kerbMat: THREE.MeshStandardMaterial;
   skyMat: THREE.MeshBasicMaterial;
+  breakableProps: BreakablePropState[];
+  syncBreakablePropsVisuals: () => void;
   updateWeatherVisuals: (weather: WeatherState) => void;
   updateTrackRubberVisuals: (rubberState: TrackRubberState, weather: WeatherState) => void;
 }
@@ -268,31 +272,144 @@ function createKerbTexture(primaryHex: string, secondaryHex: string, maxAnisotro
 
 function createArmcoRailTexture(maxAnisotropy: number): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
-  canvas.width = 256;
-  canvas.height = 128;
+  canvas.width = 512;
+  canvas.height = 256;
   const ctx = canvas.getContext('2d')!;
 
-  const grad = ctx.createLinearGradient(0, 0, 0, 128);
-  grad.addColorStop(0, '#94a3b8');
-  grad.addColorStop(0.22, '#e2e8f0');
-  grad.addColorStop(0.45, '#475569');
-  grad.addColorStop(0.55, '#475569');
-  grad.addColorStop(0.78, '#e2e8f0');
-  grad.addColorStop(1, '#64748b');
+  // Double-wave W-beam hot-dip galvanized steel shading with crisp specular ridges
+  const grad = ctx.createLinearGradient(0, 0, 0, 256);
+  grad.addColorStop(0.0, '#64748b');
+  grad.addColorStop(0.12, '#cbd5e1');
+  grad.addColorStop(0.24, '#f8fafc');
+  grad.addColorStop(0.36, '#94a3b8');
+  grad.addColorStop(0.47, '#334155');
+  grad.addColorStop(0.53, '#334155');
+  grad.addColorStop(0.64, '#94a3b8');
+  grad.addColorStop(0.76, '#f8fafc');
+  grad.addColorStop(0.88, '#cbd5e1');
+  grad.addColorStop(1.0, '#475569');
   ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, 256, 128);
+  ctx.fillRect(0, 0, 512, 256);
 
-  ctx.fillStyle = 'rgba(15, 23, 42, 0.45)';
-  for (let x = 0; x < 256; x += 64) {
-    ctx.fillRect(x, 0, 4, 128);
-    ctx.fillRect(x + 6, 28, 4, 8);
-    ctx.fillRect(x + 6, 92, 4, 8);
+  // Subtle zinc spangle grain & horizontal tire-rub marks
+  for (let i = 0; i < 1800; i++) {
+    ctx.fillStyle = i % 2 === 0 ? 'rgba(255,255,255,0.05)' : 'rgba(15,23,42,0.06)';
+    ctx.fillRect(Math.random() * 512, Math.random() * 256, 6, 2);
+  }
+
+  // Vertical overlapping W-beam panel splice seams, hex bolt rows & retro-reflective safety reflectors
+  for (let x = 0; x < 512; x += 128) {
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.55)';
+    ctx.fillRect(x, 0, 5, 256);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+    ctx.fillRect(x + 5, 0, 2, 256);
+
+    // Splice bolts
+    ctx.fillStyle = '#1e293b';
+    for (const by of [44, 72, 128, 184, 212]) {
+      ctx.beginPath();
+      ctx.arc(x + 14, by, 4.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Red/white retro-reflective trapezoid delineator in the central W-beam valley
+    ctx.fillStyle = '#ef4444';
+    ctx.fillRect(x + 52, 118, 18, 20);
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillRect(x + 70, 118, 18, 20);
+    ctx.strokeStyle = '#0f172a';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x + 52, 118, 36, 20);
   }
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.anisotropy = maxAnisotropy;
+  return tex;
+}
+
+function createChevronBoardTexture(maxAnisotropy: number): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d')!;
+
+  ctx.fillStyle = '#f8fafc';
+  ctx.fillRect(0, 0, 256, 128);
+
+  ctx.fillStyle = '#dc2626';
+  for (let x = -64; x < 280; x += 64) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x + 34, 0);
+    ctx.lineTo(x + 64, 64);
+    ctx.lineTo(x + 34, 128);
+    ctx.lineTo(x, 128);
+    ctx.lineTo(x + 30, 64);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  ctx.strokeStyle = '#1e293b';
+  ctx.lineWidth = 6;
+  ctx.strokeRect(3, 3, 250, 122);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = maxAnisotropy;
+  return tex;
+}
+
+function createBrakingMarkerTexture(distanceLabel: string, maxAnisotropy: number): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d')!;
+
+  ctx.fillStyle = '#0f172a';
+  ctx.fillRect(0, 0, 256, 128);
+  ctx.fillStyle = '#dc2626';
+  ctx.fillRect(8, 8, 240, 22);
+  ctx.strokeStyle = '#f8fafc';
+  ctx.lineWidth = 5;
+  ctx.strokeRect(5, 5, 246, 118);
+
+  ctx.fillStyle = '#f8fafc';
+  ctx.font = '900 66px "Chakra Petch", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(distanceLabel, 128, 78);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = maxAnisotropy;
+  return tex;
+}
+
+function createHayBaleTexture(maxAnisotropy: number): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d')!;
+
+  ctx.fillStyle = '#ca8a04';
+  ctx.fillRect(0, 0, 256, 256);
+
+  for (let i = 0; i < 1600; i++) {
+    ctx.fillStyle =
+      i % 3 === 0 ? '#facc15' : i % 2 === 0 ? '#a16207' : '#eab308';
+    ctx.fillRect(Math.random() * 256, Math.random() * 256, 14, 3);
+  }
+
+  // Twin sisal twine binding straps around the bale
+  ctx.fillStyle = '#78350f';
+  ctx.fillRect(0, 62, 256, 10);
+  ctx.fillRect(0, 184, 256, 10);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = maxAnisotropy;
   return tex;
 }
@@ -561,15 +678,31 @@ export function buildTrackEnvironment(
     const rlZ = s.z - s.rz * (halfW + guardrailOffset);
     const rrX = s.x + s.rx * (halfW + guardrailOffset);
     const rrZ = s.z + s.rz * (halfW + guardrailOffset);
-    const railV = (i / n) * 150;
+    const railU = (i / n) * 165;
 
+    // 3D W-Beam Corrugated Armco Profile (5 vertices per side = 10 vertices per station):
+    // Protrudes 0.095m inward toward the track on the lower (y+0.28m) and upper (y+0.64m) corrugation crests,
+    // with a deep recessed central bolt valley at y+0.46m so light catches true 3D metallic ridges!
+    const wCrestIn = 0.095;
+    const wValleyIn = 0.015;
     railPositions.push(
-      rlX, ly + 0.02, rlZ,
-      rlX, ly + 0.78, rlZ,
-      rrX, ry + 0.02, rrZ,
-      rrX, ry + 0.78, rrZ
+      // Left guardrail (0..4): inward is +s.rx, +s.rz
+      rlX, ly + 0.14, rlZ,
+      rlX + s.rx * wCrestIn, ly + 0.28, rlZ + s.rz * wCrestIn,
+      rlX + s.rx * wValleyIn, ly + 0.46, rlZ + s.rz * wValleyIn,
+      rlX + s.rx * wCrestIn, ly + 0.64, rlZ + s.rz * wCrestIn,
+      rlX, ly + 0.79, rlZ,
+      // Right guardrail (5..9): inward is -s.rx, -s.rz
+      rrX, ry + 0.14, rrZ,
+      rrX - s.rx * wCrestIn, ry + 0.28, rrZ - s.rz * wCrestIn,
+      rrX - s.rx * wValleyIn, ry + 0.46, rrZ - s.rz * wValleyIn,
+      rrX - s.rx * wCrestIn, ry + 0.64, rrZ - s.rz * wCrestIn,
+      rrX, ry + 0.79, rrZ
     );
-    railUvs.push(railV, 0, railV, 1, railV, 0, railV, 1);
+    railUvs.push(
+      railU, 0.0, railU, 0.25, railU, 0.5, railU, 0.75, railU, 1.0,
+      railU, 0.0, railU, 0.25, railU, 0.5, railU, 0.75, railU, 1.0
+    );
 
     if (i < n) {
       // 3-vertex road cross section (2 quads per station)
@@ -594,8 +727,21 @@ export function buildTrackEnvironment(
       shoulderIndices.push(sBase + 3, sBase + 4, sBase + 9, sBase + 4, sBase + 10, sBase + 9);
       shoulderIndices.push(sBase + 4, sBase + 5, sBase + 10, sBase + 5, sBase + 11, sBase + 10);
 
-      railIndices.push(kBase, kBase + 1, kBase + 4, kBase + 1, kBase + 5, kBase + 4);
-      railIndices.push(kBase + 2, kBase + 3, kBase + 6, kBase + 3, kBase + 7, kBase + 6);
+      // 10-vertex 3D W-Beam Guardrail indices (4 corrugated strips Left + 4 corrugated strips Right)
+      const gBase = i * 10;
+      const gNext = (i + 1) * 10;
+      for (let seg = 0; seg < 4; seg++) {
+        // Left W-beam strip
+        railIndices.push(
+          gBase + seg, gBase + seg + 1, gNext + seg,
+          gBase + seg + 1, gNext + seg + 1, gNext + seg
+        );
+        // Right W-beam strip
+        railIndices.push(
+          gBase + 5 + seg, gNext + 5 + seg, gBase + 5 + seg + 1,
+          gBase + 5 + seg + 1, gNext + 5 + seg, gNext + 5 + seg + 1
+        );
+      }
     }
   }
 
@@ -740,12 +886,123 @@ export function buildTrackEnvironment(
   const railMat = new THREE.MeshStandardMaterial({
     color: 0xffffff,
     map: railTex,
-    roughness: 0.36,
-    metalness: 0.72,
+    roughness: 0.28,
+    metalness: 0.78,
     side: THREE.DoubleSide,
   });
   const railMesh = new THREE.Mesh(railGeo, railMat);
   envGroup.add(railMesh);
+
+  // 2B-2. 3D Galvanized Steel I-Beam Guardrail Support Posts & Retro-Reflective Corner Chevron Boards (InstancedMesh)
+  const postStep = 2;
+  const maxPosts = Math.ceil(n / postStep) * 2;
+  const railPostGeo = new THREE.BoxGeometry(0.11, 0.88, 0.14);
+  const railPostMat = new THREE.MeshStandardMaterial({
+    color: 0x94a3b8,
+    roughness: 0.38,
+    metalness: 0.82,
+  });
+  const railPostsInst = new THREE.InstancedMesh(railPostGeo, railPostMat, maxPosts);
+  const postDummy = new THREE.Object3D();
+  let postIdx = 0;
+
+  // Count corner chevron boards
+  const chevronStations: Array<{ x: number; y: number; z: number; yaw: number }> = [];
+  for (let i = 0; i < n; i += postStep) {
+    const s = samples[i];
+    const halfW = s.width * 0.5;
+    const bankLift = Math.sin(s.bankingRad) * halfW;
+    const ly = s.y - bankLift;
+    const ry = s.y + bankLift;
+    const yaw = Math.atan2(s.tx, s.tz);
+
+    // Left support post anchored just behind the left W-beam rail
+    const lx = s.x - s.rx * (halfW + guardrailOffset + 0.07);
+    const lz = s.z - s.rz * (halfW + guardrailOffset + 0.07);
+    postDummy.position.set(lx, ly + 0.39, lz);
+    postDummy.rotation.set(0, yaw, 0);
+    postDummy.updateMatrix();
+    railPostsInst.setMatrixAt(postIdx++, postDummy.matrix);
+
+    // Right support post anchored just behind the right W-beam rail
+    const rxPos = s.x + s.rx * (halfW + guardrailOffset + 0.07);
+    const rzPos = s.z + s.rz * (halfW + guardrailOffset + 0.07);
+    postDummy.position.set(rxPos, ry + 0.39, rzPos);
+    postDummy.rotation.set(0, yaw, 0);
+    postDummy.updateMatrix();
+    railPostsInst.setMatrixAt(postIdx++, postDummy.matrix);
+
+    // Add high-visibility red/white corner chevron boards along the outside of sharp bends
+    if (Math.abs(s.curvature) >= 0.0072 && i % 4 === 0) {
+      const outsideSign = s.curvature > 0 ? 1 : -1;
+      const cx = s.x + s.rx * outsideSign * (halfW + guardrailOffset + 0.12);
+      const cz = s.z + s.rz * outsideSign * (halfW + guardrailOffset + 0.12);
+      const cy = (outsideSign > 0 ? ry : ly) + 1.08;
+      chevronStations.push({
+        x: cx,
+        y: cy,
+        z: cz,
+        yaw: yaw + (outsideSign > 0 ? -0.35 : 0.35),
+      });
+    }
+  }
+  railPostsInst.count = postIdx;
+  railPostsInst.instanceMatrix.needsUpdate = true;
+  railPostsInst.computeBoundingSphere();
+  envGroup.add(railPostsInst);
+
+  if (chevronStations.length > 0) {
+    const chevronGeo = new THREE.BoxGeometry(0.12, 0.56, 1.45);
+    const chevronMat = new THREE.MeshStandardMaterial({
+      map: createChevronBoardTexture(maxAnisotropy),
+      roughness: 0.35,
+      metalness: 0.15,
+    });
+    const chevronInst = new THREE.InstancedMesh(chevronGeo, chevronMat, chevronStations.length);
+    for (let c = 0; c < chevronStations.length; c++) {
+      const ch = chevronStations[c];
+      postDummy.position.set(ch.x, ch.y, ch.z);
+      postDummy.rotation.set(0, ch.yaw, 0);
+      postDummy.updateMatrix();
+      chevronInst.setMatrixAt(c, postDummy.matrix);
+    }
+    chevronInst.instanceMatrix.needsUpdate = true;
+    chevronInst.computeBoundingSphere();
+    envGroup.add(chevronInst);
+  }
+
+  // 2B-3. 150m / 100m / 50m Corner Braking Distance Marker Boards before major corners
+  const brakeLabels = ['150', '100', '50'] as const;
+  const brakeMats = brakeLabels.map(
+    (lbl) =>
+      new THREE.MeshStandardMaterial({
+        map: createBrakingMarkerTexture(lbl, maxAnisotropy),
+        roughness: 0.35,
+      })
+  );
+  const brakeBoardGeo = new THREE.BoxGeometry(0.92, 0.52, 0.08);
+  let lastBrakingZoneIdx = -40;
+  for (let i = 24; i < n - 12; i++) {
+    const prevCurv = Math.abs(samples[i - 4].curvature);
+    const currCurv = Math.abs(samples[i].curvature);
+    if (currCurv >= 0.011 && prevCurv < 0.006 && i - lastBrakingZoneIdx > 32) {
+      lastBrakingZoneIdx = i;
+      const outsideSign = samples[i].curvature > 0 ? 1 : -1;
+      const offsets = [12, 8, 4]; // ~150m, 100m, 50m upstream of corner entry
+      offsets.forEach((stepBack, bIdx) => {
+        const stIdx = (i - stepBack + n) % n;
+        const bs = samples[stIdx];
+        const bLat = outsideSign * (bs.width * 0.5 + guardrailOffset - 0.18);
+        const bx = bs.x + bs.rx * bLat;
+        const bz = bs.z + bs.rz * bLat;
+        const by = bs.y + 0.96;
+        const boardMesh = new THREE.Mesh(brakeBoardGeo, brakeMats[bIdx]);
+        boardMesh.position.set(bx, by, bz);
+        boardMesh.rotation.y = Math.atan2(bs.tx, bs.tz);
+        envGroup.add(boardMesh);
+      });
+    }
+  }
 
   // 2C. Off-Line Corner Tire Debris "Marbles" (Instanced vulcanized rubber chunks outside the racing groove)
   const marbleCapacity = 240;
@@ -964,24 +1221,89 @@ export function buildTrackEnvironment(
   }
   envGroup.add(pitGroup);
 
-  // 5. Outer Corner Hay Bales / Safety Cushions (Zero Road Ads or Commercial Signs)
+  // 5. Interactive Breakable Trackside Props (Golden Straw Hay Bales, Striped Apex Cones & Chicane Boards)
   const postMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.4, metalness: 0.8 });
-  const hayBaleMat = new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.92 });
-  const hayBaleGeo = new THREE.BoxGeometry(1.35, 0.72, 0.78);
+  const breakableProps = createTrackBreakableProps(track);
+  const hayProps = breakableProps.filter((p) => p.type === 'hay_bale');
+  const coneProps = breakableProps.filter((p) => p.type === 'apex_cone');
+  const signProps = breakableProps.filter((p) => p.type === 'chicane_sign');
 
-  for (let i = 0; i < n; i += 18) {
-    const s = samples[i];
-    if (Math.abs(s.curvature) > 0.017) {
-      const outsideSign = s.curvature > 0 ? -1 : 1;
-      const hx = s.x + s.rx * outsideSign * (s.width * 0.5 + 1.48);
-      const hz = s.z + s.rz * outsideSign * (s.width * 0.5 + 1.48);
-      const hLookup = findClosestTrackSample(track, hx, hz, i);
-      const bale = new THREE.Mesh(hayBaleGeo, hayBaleMat);
-      bale.position.set(hx, hLookup.surfaceY + 0.36, hz);
-      bale.rotation.y = Math.atan2(s.tx, s.tz);
-      envGroup.add(bale);
+  const hayBaleGeo = new THREE.BoxGeometry(1.18, 0.62, 0.72);
+  const hayBaleMat = new THREE.MeshStandardMaterial({
+    map: createHayBaleTexture(maxAnisotropy),
+    roughness: 0.88,
+  });
+  const hayBaleInst = new THREE.InstancedMesh(
+    hayBaleGeo,
+    hayBaleMat,
+    Math.max(1, hayProps.length)
+  );
+  hayBaleInst.frustumCulled = false;
+
+  const apexConeGeo = new THREE.ConeGeometry(0.24, 0.64, 14);
+  const apexConeMat = new THREE.MeshStandardMaterial({
+    color: 0xf97316,
+    emissive: 0xea580c,
+    emissiveIntensity: 0.18,
+    roughness: 0.45,
+  });
+  const apexConeInst = new THREE.InstancedMesh(
+    apexConeGeo,
+    apexConeMat,
+    Math.max(1, coneProps.length)
+  );
+  apexConeInst.frustumCulled = false;
+
+  const chicaneSignGeo = new THREE.BoxGeometry(1.05, 0.54, 0.10);
+  const chicaneSignMat = new THREE.MeshStandardMaterial({
+    map: createChevronBoardTexture(maxAnisotropy),
+    roughness: 0.42,
+  });
+  const chicaneSignInst = new THREE.InstancedMesh(
+    chicaneSignGeo,
+    chicaneSignMat,
+    Math.max(1, signProps.length)
+  );
+  chicaneSignInst.frustumCulled = false;
+
+  envGroup.add(hayBaleInst, apexConeInst, chicaneSignInst);
+
+  const propDummy = new THREE.Object3D();
+  const syncBreakablePropsVisuals = () => {
+    for (let i = 0; i < hayProps.length; i++) {
+      const p = hayProps[i];
+      propDummy.position.set(p.x, p.y + 0.31, p.z);
+      propDummy.rotation.set(p.pitch, p.yaw, p.roll);
+      propDummy.scale.setScalar(p.broken && p.respawnTimer < 11.2 ? 0.001 : 1.0);
+      propDummy.updateMatrix();
+      hayBaleInst.setMatrixAt(i, propDummy.matrix);
     }
-  }
+    hayBaleInst.count = hayProps.length;
+    hayBaleInst.instanceMatrix.needsUpdate = true;
+
+    for (let i = 0; i < coneProps.length; i++) {
+      const p = coneProps[i];
+      propDummy.position.set(p.x, p.y + 0.32, p.z);
+      propDummy.rotation.set(p.pitch, p.yaw, p.roll);
+      propDummy.scale.setScalar(p.broken && p.respawnTimer < 11.2 ? 0.001 : 1.0);
+      propDummy.updateMatrix();
+      apexConeInst.setMatrixAt(i, propDummy.matrix);
+    }
+    apexConeInst.count = coneProps.length;
+    apexConeInst.instanceMatrix.needsUpdate = true;
+
+    for (let i = 0; i < signProps.length; i++) {
+      const p = signProps[i];
+      propDummy.position.set(p.x, p.y + 0.30, p.z);
+      propDummy.rotation.set(p.pitch, p.yaw, p.roll);
+      propDummy.scale.setScalar(p.broken && p.respawnTimer < 11.2 ? 0.001 : 1.0);
+      propDummy.updateMatrix();
+      chicaneSignInst.setMatrixAt(i, propDummy.matrix);
+    }
+    chicaneSignInst.count = signProps.length;
+    chicaneSignInst.instanceMatrix.needsUpdate = true;
+  };
+  syncBreakablePropsVisuals();
 
   // 7. Trackside Marshal Observation Posts with Flags
   for (const mIdx of [Math.floor(n * 0.28), Math.floor(n * 0.65)]) {
@@ -1027,26 +1349,50 @@ export function buildTrackEnvironment(
   const concreteMat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.8 });
   const roofMat = new THREE.MeshStandardMaterial({ color: 0x991b1b, roughness: 0.5, metalness: 0.25 });
   const crowdColors = [0xdc2626, 0x2563eb, 0xfacc15, 0xf8fafc, 0x16a34a];
+  const specZCoords: number[] = [];
+  for (let sz = -21; sz <= 21; sz += 3.5) {
+    specZCoords.push(sz);
+  }
+  const totalSpectators = 4 * specZCoords.length;
+  const specTorsoInst = new THREE.InstancedMesh(
+    new THREE.BoxGeometry(0.45, 0.58, 0.55),
+    new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.7 }),
+    totalSpectators
+  );
+  const specHeadInst = new THREE.InstancedMesh(
+    new THREE.SphereGeometry(0.16, 8, 8),
+    skinMat,
+    totalSpectators
+  );
+  const specDummy = new THREE.Object3D();
+  const specColor = new THREE.Color();
+  let specIdx = 0;
 
+  const tierGeo = new THREE.BoxGeometry(2.2, 1, 48);
   for (let tier = 0; tier < 4; tier++) {
     const tierH = 1.1 + tier * 1.1;
-    const tierMesh = new THREE.Mesh(new THREE.BoxGeometry(2.2, tierH, 48), concreteMat);
+    const tierMesh = new THREE.Mesh(tierGeo, concreteMat);
+    tierMesh.scale.y = tierH;
     tierMesh.position.set(-tier * 2.1, tierH * 0.5, 0);
     standGroup.add(tierMesh);
 
-    // 3D Spectator row along each tier bench
-    for (let sz = -21; sz <= 21; sz += 3.5) {
-      const cMat = new THREE.MeshStandardMaterial({
-        color: crowdColors[(tier + Math.abs(Math.round(sz))) % crowdColors.length],
-        roughness: 0.7,
-      });
-      const specTorso = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.58, 0.55), cMat);
-      specTorso.position.set(-tier * 2.1 + 0.3, tierH + 0.29, sz);
-      const specHead = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 8), skinMat);
-      specHead.position.set(-tier * 2.1 + 0.3, tierH + 0.72, sz);
-      standGroup.add(specTorso, specHead);
+    for (const sz of specZCoords) {
+      specDummy.position.set(-tier * 2.1 + 0.3, tierH + 0.29, sz);
+      specDummy.updateMatrix();
+      specTorsoInst.setMatrixAt(specIdx, specDummy.matrix);
+      specColor.setHex(crowdColors[(tier + Math.abs(Math.round(sz))) % crowdColors.length]);
+      specTorsoInst.setColorAt(specIdx, specColor);
+
+      specDummy.position.set(-tier * 2.1 + 0.3, tierH + 0.72, sz);
+      specDummy.updateMatrix();
+      specHeadInst.setMatrixAt(specIdx, specDummy.matrix);
+      specIdx++;
     }
   }
+  specTorsoInst.instanceMatrix.needsUpdate = true;
+  if (specTorsoInst.instanceColor) specTorsoInst.instanceColor.needsUpdate = true;
+  specHeadInst.instanceMatrix.needsUpdate = true;
+  standGroup.add(specTorsoInst, specHeadInst);
   const standRoof = new THREE.Mesh(new THREE.BoxGeometry(11, 0.4, 50), roofMat);
   standRoof.position.set(-3.2, 7.6, 0);
   standRoof.rotation.z = -0.15;
@@ -1075,16 +1421,16 @@ export function buildTrackEnvironment(
   landmarkGroup.add(towerBase, towerUpper, towerSpire);
   envGroup.add(landmarkGroup);
 
-  // 10. InstancedMesh Two-Tiered Pine/Cypress Trees & Rock Formations
-  const treeCount = 140;
-  const trunkGeo = new THREE.CylinderGeometry(0.28, 0.46, 2.8, 8);
-  trunkGeo.translate(0, 1.4, 0);
+  // 10. InstancedMesh Two-Tiered Pine/Cypress Trees (Roadside Canopy Avenues + Forest Groves) & Rock Formations
+  const treeCount = 240;
+  const trunkGeo = new THREE.CylinderGeometry(0.32, 0.52, 3.6, 8);
+  trunkGeo.translate(0, 1.8, 0);
   const trunkMat = new THREE.MeshStandardMaterial({ color: 0x451a03, roughness: 0.9 });
 
-  const foliageLowerGeo = new THREE.ConeGeometry(2.7, 4.8, 9);
-  foliageLowerGeo.translate(0, 4.4, 0);
-  const foliageUpperGeo = new THREE.ConeGeometry(2.0, 4.6, 9);
-  foliageUpperGeo.translate(0, 7.2, 0);
+  const foliageLowerGeo = new THREE.ConeGeometry(3.4, 5.2, 9);
+  foliageLowerGeo.translate(0, 5.2, 0);
+  const foliageUpperGeo = new THREE.ConeGeometry(2.5, 4.8, 9);
+  foliageUpperGeo.translate(0, 8.2, 0);
   const foliageMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.82 });
 
   const trunkInst = new THREE.InstancedMesh(trunkGeo, trunkMat, treeCount);
@@ -1107,6 +1453,84 @@ export function buildTrackEnvironment(
   };
 
   let placedTrees = 0;
+
+  // 10A. Overarching Roadside Tree Canopy Avenues (cast rhythmic dappled sunlight & shadow bands across the cockpit!)
+  const canopyShadowPositions: Array<{ x: number; y: number; z: number; yaw: number; width: number }> = [];
+  for (const sector of TREE_CANOPY_SECTORS) {
+    const startI = Math.floor((sector.startIdx / 600) * n);
+    const endI = Math.floor((sector.endIdx / 600) * n);
+    for (let i = startI; i <= endI && placedTrees < treeCount - 2; i += 3) {
+      const s = samples[i % n];
+      const yaw = Math.atan2(s.tx, s.tz);
+      canopyShadowPositions.push({
+        x: s.x,
+        y: s.y + 0.018,
+        z: s.z,
+        yaw,
+        width: s.width - 0.6,
+      });
+
+      for (const side of [-1, 1]) {
+        if (placedTrees >= treeCount) break;
+        const vergeDist = s.width * 0.5 + 3.35;
+        const tx = s.x + s.rx * side * vergeDist;
+        const tz = s.z + s.rz * side * vergeDist;
+        const scale = 1.08 + (i % 3) * 0.08;
+
+        dummy.position.set(tx, s.y - 0.25, tz);
+        // Lean slightly inward over the road to form a lush overarching Mediterranean tree canopy
+        dummy.rotation.set(0, yaw, -side * 0.14);
+        dummy.scale.set(scale * 1.15, scale, scale * 1.15);
+        dummy.updateMatrix();
+
+        trunkInst.setMatrixAt(placedTrees, dummy.matrix);
+        foliageInst.setMatrixAt(placedTrees, dummy.matrix);
+        foliageUpperInst.setMatrixAt(placedTrees, dummy.matrix);
+
+        const hue = 0.28 + ((i % 5) - 2) * 0.01;
+        const sat = 0.45;
+        const light = 0.21 + (i % 2) * 0.03;
+        colorHelper.setHSL(hue, sat, light);
+        foliageInst.setColorAt(placedTrees, colorHelper);
+        colorHelper.setHSL(hue, sat, light * 1.15);
+        foliageUpperInst.setColorAt(placedTrees, colorHelper);
+        placedTrees++;
+      }
+    }
+  }
+
+  // Render Dappled Canopy Shadow Bands across the asphalt in Tree Canopy sectors
+  if (canopyShadowPositions.length > 0) {
+    const shadowBandGeo = new THREE.PlaneGeometry(1, 3.2);
+    shadowBandGeo.rotateX(-Math.PI / 2);
+    const shadowBandMat = new THREE.MeshBasicMaterial({
+      color: 0x090d16,
+      transparent: true,
+      opacity: 0.34,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -3,
+      polygonOffsetUnits: -3,
+    });
+    const shadowBandInst = new THREE.InstancedMesh(
+      shadowBandGeo,
+      shadowBandMat,
+      canopyShadowPositions.length
+    );
+    for (let c = 0; c < canopyShadowPositions.length; c++) {
+      const sp = canopyShadowPositions[c];
+      dummy.position.set(sp.x, sp.y, sp.z);
+      dummy.rotation.set(0, sp.yaw, 0);
+      dummy.scale.set(sp.width, 1, 1);
+      dummy.updateMatrix();
+      shadowBandInst.setMatrixAt(c, dummy.matrix);
+    }
+    shadowBandInst.instanceMatrix.needsUpdate = true;
+    shadowBandInst.computeBoundingSphere();
+    envGroup.add(shadowBandInst);
+  }
+
+  // 10B. Scattered Background Forest Trees
   let attempts = 0;
   while (placedTrees < treeCount && attempts < 900) {
     attempts++;
@@ -1153,6 +1577,89 @@ export function buildTrackEnvironment(
   foliageInst.computeBoundingSphere();
   foliageUpperInst.computeBoundingSphere();
   envGroup.add(trunkInst, foliageInst, foliageUpperInst);
+
+  // 10C. 3D Vaulted Stone & Concrete Tunnel Galleries with Warm Sodium Ceiling Luminaires
+  const tunnelWallMat = new THREE.MeshStandardMaterial({
+    color: 0x475569,
+    roughness: 0.82,
+    metalness: 0.12,
+  });
+  const tunnelRoofMat = new THREE.MeshStandardMaterial({
+    color: 0x334155,
+    roughness: 0.78,
+    metalness: 0.18,
+  });
+  const tunnelPortalTrimMat = new THREE.MeshStandardMaterial({
+    color: 0xcbd5e1,
+    roughness: 0.55,
+    metalness: 0.25,
+  });
+  const sodiumLampMat = new THREE.MeshStandardMaterial({
+    color: 0xffb347,
+    emissive: new THREE.Color(0xf59e0b),
+    emissiveIntensity: 3.4,
+    roughness: 0.15,
+  });
+  const lampHousingMat = new THREE.MeshStandardMaterial({
+    color: 0x0f172a,
+    roughness: 0.4,
+    metalness: 0.8,
+  });
+
+  const pillarGeo = new THREE.BoxGeometry(0.78, 5.4, 1.35);
+  const rightWallSegGeo = new THREE.BoxGeometry(0.85, 5.4, 4.4);
+  const roofSegGeo = new THREE.BoxGeometry(1, 0.72, 4.5);
+  const lampHousingGeo = new THREE.BoxGeometry(1.85, 0.16, 0.48);
+  const lampGlowGeo = new THREE.BoxGeometry(1.65, 0.12, 0.34);
+
+  for (const tSec of TUNNEL_GALLERY_SECTORS) {
+    const startI = Math.floor((tSec.startIdx / 600) * n);
+    const endI = Math.floor((tSec.endIdx / 600) * n);
+    for (let i = startI; i <= endI; i += 2) {
+      const s = samples[i % n];
+      const yaw = Math.atan2(s.tx, s.tz);
+      const halfW = s.width * 0.5;
+      const wallOffset = halfW + guardrailOffset + 0.55;
+      const spanW = wallOffset * 2 + 0.9;
+
+      // Left colonnade pillar
+      const lx = s.x - s.rx * wallOffset;
+      const lz = s.z - s.rz * wallOffset;
+      const pillar = new THREE.Mesh(pillarGeo, tunnelWallMat);
+      pillar.position.set(lx, s.y + 2.6, lz);
+      pillar.rotation.y = yaw;
+      envGroup.add(pillar);
+
+      // Right solid retaining wall segment
+      const rxPos = s.x + s.rx * wallOffset;
+      const rzPos = s.z + s.rz * wallOffset;
+      const rWall = new THREE.Mesh(rightWallSegGeo, tunnelWallMat);
+      rWall.position.set(rxPos, s.y + 2.6, rzPos);
+      rWall.rotation.y = yaw;
+      envGroup.add(rWall);
+
+      // Vaulted overhead tunnel roof slab
+      const roofSlab = new THREE.Mesh(
+        roofSegGeo,
+        i === startI || i >= endI - 1 ? tunnelPortalTrimMat : tunnelRoofMat
+      );
+      roofSlab.scale.x = spanW;
+      roofSlab.position.set(s.x, s.y + 5.35, s.z);
+      roofSlab.rotation.y = yaw;
+      envGroup.add(roofSlab);
+
+      // Warm amber sodium-vapor ceiling luminaire every 2 segments
+      if ((i - startI) % 2 === 0) {
+        const housing = new THREE.Mesh(lampHousingGeo, lampHousingMat);
+        housing.position.set(s.x, s.y + 4.92, s.z);
+        housing.rotation.y = yaw;
+        const lampBar = new THREE.Mesh(lampGlowGeo, sodiumLampMat);
+        lampBar.position.set(s.x, s.y + 4.82, s.z);
+        lampBar.rotation.y = yaw;
+        envGroup.add(housing, lampBar);
+      }
+    }
+  }
 
   let placedRocks = 0;
   attempts = 0;
@@ -1250,6 +1757,8 @@ export function buildTrackEnvironment(
     racingLineMat,
     kerbMat,
     skyMat,
+    breakableProps,
+    syncBreakablePropsVisuals,
     updateWeatherVisuals,
     updateTrackRubberVisuals,
   };

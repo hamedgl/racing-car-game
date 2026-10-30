@@ -219,6 +219,60 @@ class RacingAudioEngine {
       osc.stop(now + idx * 0.09 + 0.28);
     });
   }
+
+  public playPitAirJack(isUp: boolean) {
+    if (this.isMuted) return;
+    if (!this.ctx) this.init();
+    if (!this.ctx) return;
+
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'triangle';
+    if (isUp) {
+      osc.frequency.setValueAtTime(95, now);
+      osc.frequency.exponentialRampToValueAtTime(210, now + 0.18);
+    } else {
+      osc.frequency.setValueAtTime(190, now);
+      osc.frequency.exponentialRampToValueAtTime(58, now + 0.22);
+    }
+
+    gain.gain.setValueAtTime(0.075, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
+
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.25);
+  }
+
+  public playPitWheelGunBurst() {
+    if (this.isMuted) return;
+    if (!this.ctx) this.init();
+    if (!this.ctx) return;
+
+    const now = this.ctx.currentTime;
+    // High-RPM pneumatic air impact wrench ratcheting pulse sequence
+    const pulses = [0, 0.055, 0.11, 0.165, 0.22];
+    pulses.forEach((offset, idx) => {
+      if (!this.ctx) return;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sawtooth';
+      const baseF = 540 + idx * 45;
+      osc.frequency.setValueAtTime(baseF, now + offset);
+      osc.frequency.exponentialRampToValueAtTime(baseF * 1.45, now + offset + 0.045);
+
+      gain.gain.setValueAtTime(0.055, now + offset);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + offset + 0.05);
+
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start(now + offset);
+      osc.stop(now + offset + 0.052);
+    });
+  }
 }
 
 export const racingAudio = new RacingAudioEngine();
+

@@ -18,6 +18,32 @@ export interface CornerTireState {
   slipLoad: number;            // instantaneous corner thermal/wear load 0..1
 }
 
+export type PitStopPhase =
+  | 'idle'
+  | 'jacking_up'
+  | 'wheels_off'
+  | 'wheels_on'
+  | 'torque_lock'
+  | 'dropping_go';
+
+export interface PitStopAnimationState {
+  active: boolean;
+  phase: PitStopPhase;
+  phaseLabel: string;
+  progress: number;              // 0..1 overall pit stop progress
+  phaseProgress: number;         // 0..1 progress within active phase
+  chassisLiftY: number;          // vertical jack lift height in meters (0 .. 0.13m)
+  chassisPitchOffsetRad: number; // two-stage jacking pitch angle in radians
+  wheelLateralOffsetM: number;   // outward wheel removal/fitting offset in meters (0 .. 0.38m)
+  wheelTiltRad: number;          // wheel camber tilt while off the hub in radians
+  wrenchSpinRad: number;         // cumulative rotation angle of pneumatic impact guns
+  wrenchActive: boolean;         // true during knock-off unfastening and torque lock phases
+  showFreshCompound: boolean;    // true once fresh compound tires are mounted (progress >= 0.50)
+  mechanicReachRatio: number;    // 0 (standing back at pit wall) .. 1 (kneeling at wheel hub)
+  jackHandleAngleRad: number;    // tubular quick-lift jack lever angle in radians
+  lollipopRaised: boolean;       // true when pit chief raises the GO lollipop board
+}
+
 export interface VehicleTireState {
   compound: TireCompound;
   nextPitCompound: TireCompound;
@@ -35,8 +61,9 @@ export interface VehicleTireState {
   inPitZone: boolean;          // true when driving along the Pit Lane Service Box
   pitRequest: boolean;         // true when driver armed pit stop [B] or Pit Button
   pitStopActive: boolean;      // true while stationary in pit box being serviced
-  pitStopTimer: number;        // countdown seconds remaining in pit stop (2.2s -> 0s)
+  pitStopTimer: number;        // countdown seconds remaining in pit stop (2.4s -> 0s)
   pitStopsCompleted: number;   // number of pit stops completed this race
+  pitCooldownTimer?: number;   // cooldown seconds after pit exit to prevent immediate re-entry
 }
 
 export interface ChampionshipLevelSpec {
@@ -227,6 +254,7 @@ export interface VehiclePhysicsState {
   isOffTrack: boolean;
   isDrafting: boolean;
   hitFlashTimer: number;
+  collisionTimer?: number;   // rigid-body impact recovery timer during which artificial yaw/lateral damping is relaxed
   brakeTelegraphTimer: number;
   // Race progress
   trackSampleIndex: number;
@@ -257,6 +285,62 @@ export interface VehiclePhysicsState {
   onMarbles: boolean;
   lineGripModifier: number; // >1.0 on rubbered line, <1.0 on marbles
   frontBrakeGlow: number; // 0.0 .. 1.0 glowing rotor temperature
+  // Redline Engine Tremor, Manual Shift Override & Gamified Driver Mastery Scoring
+  redlineTremor: number; // 0.0 .. 1.0 high-frequency mechanical harmonic intensity at 7000+ RPM
+  manualGearOverrideTimer: number; // seconds remaining before automatic transmission resumes
+  shiftCooldownTimer: number; // debounce timer between manual gear changes
+  styleScore: number; // cumulative gamified race mastery score
+  styleCombo: number; // 1 .. 5 active combo multiplier
+  comboTimer: number; // seconds before active combo multiplier decays
+  lastActionBanner: string; // e.g., 'PERFECT SHIFT +250', 'HAY BALE SMASH +150'
+  lastActionPoints: number;
+  lastActionTimer: number; // countdown timer for HUD action callout banner
+}
+
+export type BreakablePropType = 'hay_bale' | 'apex_cone' | 'chicane_sign';
+
+export interface BreakablePropState {
+  id: string;
+  type: BreakablePropType;
+  baseX: number;
+  baseY: number;
+  baseZ: number;
+  baseYaw: number;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  pitch: number;
+  roll: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  rx: number;
+  ry: number;
+  rz: number;
+  radius: number;
+  broken: boolean;
+  respawnTimer: number;
+  points: number;
+  label: string;
+}
+
+export type CockpitLightingZone =
+  | 'open_sky'
+  | 'tree_canopy'
+  | 'tunnel'
+  | 'grandstand_shadow';
+
+export interface CockpitLightingState {
+  zone: CockpitLightingZone;
+  zoneLabel: string;
+  ambientFactor: number;       // 0.12 (deep tunnel) .. 1.0 (bright open sky)
+  dappledFlicker: number;      // 0.0 .. 1.0 high-frequency tree-canopy sunlight flicker
+  tunnelSodiumPulse: number;   // 0.0 .. 1.0 overhead warm amber tunnel luminaire pulse
+  instrumentBacklight: number; // 0.0 .. 1.0 warm vintage gauge dial & Halda backlight glow
+  sweepPhase: number;          // -1.0 .. +1.0 longitudinal light-beam sweep across cockpit
+  lightColorHex: number;       // hex color of active external light hitting the cockpit
+  lightIntensity: number;      // dynamic cockpit point/surface light intensity
 }
 
 export type WeatherCondition = 'clear' | 'overcast' | 'rain' | 'storm' | 'dynamic';
@@ -295,6 +379,8 @@ export interface ControlInput {
   handbrake: boolean;
   nitro?: boolean;      // Nitro overboost activation
   pitRequest?: boolean; // Request / execute Pit Stop service in pit zone
+  shiftUp?: boolean;    // Manual upshift [E] / [Period] (triggers Perfect Redline Shift bonus!)
+  shiftDown?: boolean;  // Manual downshift [Q] / [Comma] (engine braking rev blip)
   steerAxis?: number;   // Optional continuous analog steering (-1 full right .. +1 full left)
 }
 

@@ -222,6 +222,12 @@ export default function App() {
     lineGripModifier: 1.02,
     verticalLoadG: 1.0,
     asphaltGripFactor: 1.12,
+    redlineTremor: 0,
+    styleScore: 0,
+    styleCombo: 1,
+    lastActionBanner: '',
+    lastActionPoints: 0,
+    lastActionTimer: 0,
     handlingMode: 'pro_assisted',
     weather: {
       condition: 'clear',
