@@ -28,6 +28,43 @@ interface VehicleSkidState {
   lastTimeMs: number;
 }
 
+let cachedSkidTexture: THREE.CanvasTexture | null = null;
+
+function getSharedSkidTexture(): THREE.CanvasTexture {
+  if (cachedSkidTexture) return cachedSkidTexture;
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d')!;
+  ctx.clearRect(0, 0, 128, 128);
+
+  const latGrad = ctx.createLinearGradient(0, 0, 128, 0);
+  latGrad.addColorStop(0.0, 'rgba(10, 10, 12, 0.0)');
+  latGrad.addColorStop(0.12, 'rgba(10, 10, 12, 0.85)');
+  latGrad.addColorStop(0.28, 'rgba(8, 8, 10, 0.95)');
+  latGrad.addColorStop(0.46, 'rgba(15, 15, 18, 0.55)');
+  latGrad.addColorStop(0.54, 'rgba(15, 15, 18, 0.55)');
+  latGrad.addColorStop(0.72, 'rgba(8, 8, 10, 0.95)');
+  latGrad.addColorStop(0.88, 'rgba(10, 10, 12, 0.85)');
+  latGrad.addColorStop(1.0, 'rgba(10, 10, 12, 0.0)');
+  ctx.fillStyle = latGrad;
+  ctx.fillRect(0, 0, 128, 128);
+
+  for (let i = 0; i < 160; i++) {
+    const sx = 12 + Math.random() * 104;
+    const sy = Math.random() * 128;
+    ctx.fillStyle = Math.random() > 0.4 ? 'rgba(5, 5, 7, 0.45)' : 'rgba(40, 40, 46, 0.25)';
+    ctx.fillRect(sx, sy, 2 + Math.random() * 2, 12 + Math.random() * 20);
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.userData = { shared: true };
+  cachedSkidTexture = tex;
+  return tex;
+}
+
 /**
  * High-performance, zero-GC circular buffer for rendering dual tire skid marks
  * on the 3D track surface under hard braking, handbrake turns, and power drifts.
@@ -35,7 +72,7 @@ interface VehicleSkidState {
  * Uses independent per-segment quads (8 vertices = 2 quads per segment) and
  * per-vehicle state tracking so separate drifts and multiple cars NEVER cross-connect.
  */
-export function createSkidMarkSystem(maxSegments = 900): SkidMarkSystem {
+export function createSkidMarkSystem(maxSegments = 750): SkidMarkSystem {
   // Each segment has 2 independent quads (Left tire quad: 4 verts, Right tire quad: 4 verts = 8 verts total)
   const vertexCount = maxSegments * 8;
   const positions = new Float32Array(vertexCount * 3);
@@ -70,37 +107,7 @@ export function createSkidMarkSystem(maxSegments = 900): SkidMarkSystem {
   geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
   geometry.setIndex(new THREE.BufferAttribute(indices, 1));
 
-  // Procedural vintage racing tire rubber skid texture with twin outer shoulder ribs & feathered edges
-  const canvas = document.createElement('canvas');
-  canvas.width = 128;
-  canvas.height = 128;
-  const ctx = canvas.getContext('2d')!;
-  ctx.clearRect(0, 0, 128, 128);
-
-  // Lateral profile across tire width (x = 0..128): soft outer edges, dark rubber shoulder blocks, tread grooves
-  const latGrad = ctx.createLinearGradient(0, 0, 128, 0);
-  latGrad.addColorStop(0.0, 'rgba(10, 10, 12, 0.0)');
-  latGrad.addColorStop(0.12, 'rgba(10, 10, 12, 0.85)');
-  latGrad.addColorStop(0.28, 'rgba(8, 8, 10, 0.95)');
-  latGrad.addColorStop(0.46, 'rgba(15, 15, 18, 0.55)');
-  latGrad.addColorStop(0.54, 'rgba(15, 15, 18, 0.55)');
-  latGrad.addColorStop(0.72, 'rgba(8, 8, 10, 0.95)');
-  latGrad.addColorStop(0.88, 'rgba(10, 10, 12, 0.85)');
-  latGrad.addColorStop(1.0, 'rgba(10, 10, 12, 0.0)');
-  ctx.fillStyle = latGrad;
-  ctx.fillRect(0, 0, 128, 128);
-
-  // Longitudinal rubber scrub striations
-  for (let i = 0; i < 240; i++) {
-    const sx = 12 + Math.random() * 104;
-    const sy = Math.random() * 128;
-    ctx.fillStyle = Math.random() > 0.4 ? 'rgba(5, 5, 7, 0.45)' : 'rgba(40, 40, 46, 0.25)';
-    ctx.fillRect(sx, sy, 2 + Math.random() * 2, 12 + Math.random() * 20);
-  }
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.wrapS = THREE.ClampToEdgeWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
+  const tex = getSharedSkidTexture();
 
   const material = new THREE.MeshBasicMaterial({
     map: tex,
@@ -120,6 +127,7 @@ export function createSkidMarkSystem(maxSegments = 900): SkidMarkSystem {
   let segWriteHead = 0;
   let activeSegmentCount = 0;
   let internalClockMs = 0;
+  let fadeAccumulator = 0;
   const vehicleStates = new Map<string, VehicleSkidState>();
 
   const halfTireWidth = 0.15; // 0.30m wide racing tire patch
@@ -272,8 +280,13 @@ export function createSkidMarkSystem(maxSegments = 900): SkidMarkSystem {
     internalClockMs += dt * 1000;
     if (activeSegmentCount === 0) return;
 
+    fadeAccumulator += dt;
+    if (fadeAccumulator < 0.25) return;
+    const stepDt = fadeAccumulator;
+    fadeAccumulator = 0;
+
     let anyFaded = false;
-    const decay = dt * 0.014; // Fades smoothly over ~60 seconds
+    const decay = stepDt * 0.014; // Fades smoothly over ~60 seconds, uploaded at 4Hz instead of 60Hz
     const vertLimit = activeSegmentCount * 8;
     for (let v = 0; v < vertLimit; v++) {
       const aIdx = v * 4 + 3;

@@ -33,10 +33,18 @@ export interface TrackEnvironmentRig {
   updateTrackRubberVisuals: (rubberState: TrackRubberState, weather: WeatherState) => void;
 }
 
+let cachedRacingLineTextures: {
+  colorMap: THREE.CanvasTexture;
+  bumpMap: THREE.CanvasTexture;
+} | null = null;
+
 function createRacingLineRubberTextures(maxAnisotropy: number): {
   colorMap: THREE.CanvasTexture;
   bumpMap: THREE.CanvasTexture;
 } {
+  if (cachedRacingLineTextures) {
+    return cachedRacingLineTextures;
+  }
   const canvas = document.createElement('canvas');
   canvas.width = 512;
   canvas.height = 1024;
@@ -57,7 +65,7 @@ function createRacingLineRubberTextures(maxAnisotropy: number): {
   ctx.fillRect(0, 0, 512, 1024);
 
   // Longitudinal tire-scrub striations and rubber weave streaks
-  for (let s = 0; s < 220; s++) {
+  for (let s = 0; s < 140; s++) {
     const lane = s % 2 === 0 ? 145 : 365;
     const x = lane + (Math.random() - 0.5) * 115;
     const y = Math.random() * 1024;
@@ -71,15 +79,15 @@ function createRacingLineRubberTextures(maxAnisotropy: number): {
   }
 
   // Coarse vulcanized rubber debris & tar pores along the groove
-  for (let i = 0; i < 9000; i++) {
+  for (let i = 0; i < 3200; i++) {
     const x = 48 + Math.random() * 416;
     const y = Math.random() * 1024;
     const edgeFade = Math.sin(((x - 48) / 416) * Math.PI);
     ctx.fillStyle =
       i % 2 === 0
-        ? `rgba(4, 5, 8, ${(0.35 * edgeFade).toFixed(3)})`
-        : `rgba(28, 33, 42, ${(0.22 * edgeFade).toFixed(3)})`;
-    ctx.fillRect(x, y, 2 + (i % 2), 3 + (i % 3));
+        ? `rgba(4, 5, 8, ${(0.38 * edgeFade).toFixed(2)})`
+        : `rgba(28, 33, 42, ${(0.24 * edgeFade).toFixed(2)})`;
+    ctx.fillRect(x, y, 2 + (i % 3), 3 + (i % 4));
   }
 
   const colorMap = new THREE.CanvasTexture(canvas);
@@ -87,6 +95,7 @@ function createRacingLineRubberTextures(maxAnisotropy: number): {
   colorMap.wrapS = THREE.ClampToEdgeWrapping;
   colorMap.wrapT = THREE.RepeatWrapping;
   colorMap.anisotropy = maxAnisotropy;
+  colorMap.userData = { shared: true };
 
   // High-contrast bump map simulating vulcanized rubber buildup & longitudinal tire grooves
   const bumpCanvas = document.createElement('canvas');
@@ -96,44 +105,54 @@ function createRacingLineRubberTextures(maxAnisotropy: number): {
   bctx.fillStyle = '#808080';
   bctx.fillRect(0, 0, 256, 512);
 
-  for (let s = 0; s < 140; s++) {
+  for (let s = 0; s < 100; s++) {
     const x = 32 + Math.random() * 192;
     const y = Math.random() * 512;
     const h = 30 + Math.random() * 90;
     bctx.fillStyle = s % 2 === 0 ? '#b8b8b8' : '#484848';
     bctx.fillRect(x, y, 2, h);
   }
-  for (let i = 0; i < 8000; i++) {
+  for (let i = 0; i < 2800; i++) {
     const x = 24 + Math.random() * 208;
     const y = Math.random() * 512;
     bctx.fillStyle = i % 2 === 0 ? '#d0d0d0' : '#383838';
-    bctx.fillRect(x, y, 2, 2);
+    bctx.fillRect(x, y, 2, 3);
   }
 
   const bumpMap = new THREE.CanvasTexture(bumpCanvas);
   bumpMap.wrapS = THREE.ClampToEdgeWrapping;
   bumpMap.wrapT = THREE.RepeatWrapping;
   bumpMap.anisotropy = maxAnisotropy;
+  bumpMap.userData = { shared: true };
 
-  return { colorMap, bumpMap };
+  cachedRacingLineTextures = { colorMap, bumpMap };
+  return cachedRacingLineTextures;
 }
+
+const asphaltTextureCache = new Map<
+  string,
+  { colorMap: THREE.CanvasTexture; bumpMap: THREE.CanvasTexture }
+>();
 
 function createAsphaltTextures(
   asphaltHex: string,
   maxAnisotropy: number
 ): { colorMap: THREE.CanvasTexture; bumpMap: THREE.CanvasTexture } {
+  const cached = asphaltTextureCache.get(asphaltHex);
+  if (cached) return cached;
+
   const canvas = document.createElement('canvas');
-  canvas.width = 1024;
-  canvas.height = 1024;
+  canvas.width = 512;
+  canvas.height = 512;
   const ctx = canvas.getContext('2d')!;
 
   ctx.fillStyle = asphaltHex;
-  ctx.fillRect(0, 0, 1024, 1024);
+  ctx.fillRect(0, 0, 512, 512);
 
   // Fine multi-tone stone aggregate speckle
-  for (let i = 0; i < 16000; i++) {
-    const x = Math.random() * 1024;
-    const y = Math.random() * 1024;
+  for (let i = 0; i < 4800; i++) {
+    const x = Math.random() * 512;
+    const y = Math.random() * 512;
     const r = Math.random();
     if (r > 0.6) {
       ctx.fillStyle = 'rgba(255,255,255,0.05)';
@@ -146,53 +165,54 @@ function createAsphaltTextures(
   }
 
   // Subtle base asphalt aggregate variation
-  const rubberGrad = ctx.createLinearGradient(0, 0, 1024, 0);
+  const rubberGrad = ctx.createLinearGradient(0, 0, 512, 0);
   rubberGrad.addColorStop(0, 'rgba(0,0,0,0.07)');
   rubberGrad.addColorStop(0.22, 'rgba(0,0,0,0.02)');
   rubberGrad.addColorStop(0.5, 'rgba(0,0,0,0.08)');
   rubberGrad.addColorStop(0.78, 'rgba(0,0,0,0.02)');
   rubberGrad.addColorStop(1, 'rgba(0,0,0,0.07)');
   ctx.fillStyle = rubberGrad;
-  ctx.fillRect(0, 0, 1024, 1024);
+  ctx.fillRect(0, 0, 512, 512);
 
   // Longitudinal tarmac paving seams & subtle rubber skid streaks
   ctx.fillStyle = 'rgba(10,12,16,0.14)';
-  ctx.fillRect(510, 0, 4, 1024);
-  for (let s = 0; s < 18; s++) {
-    const sx = 240 + Math.random() * 540;
-    const sy = Math.random() * 820;
-    const len = 80 + Math.random() * 180;
+  ctx.fillRect(255, 0, 2, 512);
+  for (let s = 0; s < 14; s++) {
+    const sx = 120 + Math.random() * 270;
+    const sy = Math.random() * 410;
+    const len = 40 + Math.random() * 90;
     ctx.fillStyle = 'rgba(8,10,14,0.12)';
-    ctx.fillRect(sx, sy, 6, len);
-    ctx.fillRect(sx + 92, sy, 6, len);
+    ctx.fillRect(sx, sy, 3, len);
+    ctx.fillRect(sx + 46, sy, 3, len);
   }
 
   // Crisp FIA historic white edge boundary lines
   ctx.fillStyle = 'rgba(248, 250, 252, 0.85)';
-  ctx.fillRect(26, 0, 14, 1024);
-  ctx.fillRect(984, 0, 14, 1024);
+  ctx.fillRect(13, 0, 7, 512);
+  ctx.fillRect(492, 0, 7, 512);
 
   // Subtle dashed center reference line
   ctx.fillStyle = 'rgba(248, 250, 252, 0.32)';
-  ctx.fillRect(507, 60, 10, 340);
-  ctx.fillRect(507, 570, 10, 340);
+  ctx.fillRect(253, 30, 5, 170);
+  ctx.fillRect(253, 285, 5, 170);
 
   const colorMap = new THREE.CanvasTexture(canvas);
   colorMap.colorSpace = THREE.SRGBColorSpace;
   colorMap.wrapS = THREE.RepeatWrapping;
   colorMap.wrapT = THREE.RepeatWrapping;
   colorMap.anisotropy = maxAnisotropy;
+  colorMap.userData = { shared: true };
 
   // High-frequency bump map for asphalt grain micro-relief
   const bumpCanvas = document.createElement('canvas');
-  bumpCanvas.width = 512;
-  bumpCanvas.height = 512;
+  bumpCanvas.width = 256;
+  bumpCanvas.height = 256;
   const bctx = bumpCanvas.getContext('2d')!;
   bctx.fillStyle = '#808080';
-  bctx.fillRect(0, 0, 512, 512);
-  for (let i = 0; i < 12000; i++) {
-    const x = Math.random() * 512;
-    const y = Math.random() * 512;
+  bctx.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 3600; i++) {
+    const x = Math.random() * 256;
+    const y = Math.random() * 256;
     bctx.fillStyle = Math.random() > 0.5 ? '#a8a8a8' : '#585858';
     bctx.fillRect(x, y, 2, 2);
   }
@@ -200,11 +220,19 @@ function createAsphaltTextures(
   bumpMap.wrapS = THREE.RepeatWrapping;
   bumpMap.wrapT = THREE.RepeatWrapping;
   bumpMap.anisotropy = maxAnisotropy;
+  bumpMap.userData = { shared: true };
 
-  return { colorMap, bumpMap };
+  const pair = { colorMap, bumpMap };
+  asphaltTextureCache.set(asphaltHex, pair);
+  return pair;
 }
 
+const kerbTextureCache = new Map<string, THREE.CanvasTexture>();
 function createKerbTexture(primaryHex: string, secondaryHex: string, maxAnisotropy: number): THREE.CanvasTexture {
+  const key = `${primaryHex}|${secondaryHex}`;
+  const cached = kerbTextureCache.get(key);
+  if (cached) return cached;
+
   const canvas = document.createElement('canvas');
   canvas.width = 256;
   canvas.height = 512;
@@ -234,10 +262,15 @@ function createKerbTexture(primaryHex: string, secondaryHex: string, maxAnisotro
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.RepeatWrapping;
   tex.anisotropy = maxAnisotropy;
+  tex.userData = { shared: true };
+  kerbTextureCache.set(key, tex);
   return tex;
 }
 
+let cachedArmcoRailTex: THREE.CanvasTexture | null = null;
 function createArmcoRailTexture(maxAnisotropy: number): THREE.CanvasTexture {
+  if (cachedArmcoRailTex) return cachedArmcoRailTex;
+
   const canvas = document.createElement('canvas');
   canvas.width = 256;
   canvas.height = 128;
@@ -265,10 +298,17 @@ function createArmcoRailTexture(maxAnisotropy: number): THREE.CanvasTexture {
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.RepeatWrapping;
   tex.anisotropy = maxAnisotropy;
+  tex.userData = { shared: true };
+  cachedArmcoRailTex = tex;
   return tex;
 }
 
+const skyTextureCache = new Map<string, THREE.CanvasTexture>();
 function createSkyDomeTexture(topHex: string, horizonHex: string, sunHex: string): THREE.CanvasTexture {
+  const key = `${topHex}|${horizonHex}|${sunHex}`;
+  const cached = skyTextureCache.get(key);
+  if (cached) return cached;
+
   const canvas = document.createElement('canvas');
   canvas.width = 512;
   canvas.height = 256;
@@ -291,6 +331,8 @@ function createSkyDomeTexture(topHex: string, horizonHex: string, sunHex: string
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
+  tex.userData = { shared: true };
+  skyTextureCache.set(key, tex);
   return tex;
 }
 
@@ -390,8 +432,8 @@ export function buildTrackEnvironment(
   const skyDome = new THREE.Mesh(new THREE.SphereGeometry(760, 28, 16), skyMat);
   envGroup.add(skyDome);
 
-  // 1. Extended Outdoor 3D Hills & Mountain Terrain Ground (120x120 high-res grid, deeply recessed within 42m of the track)
-  const groundGeo = new THREE.PlaneGeometry(1500, 1500, 120, 120);
+  // 1. Extended Outdoor 3D Hills & Mountain Terrain Ground (64x64 grid, deeply recessed within 42m of the track)
+  const groundGeo = new THREE.PlaneGeometry(1500, 1500, 64, 64);
   groundGeo.rotateX(-Math.PI / 2);
   const posAttr = groundGeo.attributes.position;
   const isAlpineTrack =
@@ -719,7 +761,7 @@ export function buildTrackEnvironment(
   envGroup.add(railMesh);
 
   // 2C. Off-Line Corner Tire Debris "Marbles" (Instanced vulcanized rubber chunks outside the racing groove)
-  const marbleCapacity = 240;
+  const marbleCapacity = 120;
   const marbleGeo = new THREE.DodecahedronGeometry(0.055, 0);
   marbleGeo.scale(1.3, 0.45, 0.95);
   const marbleMat = new THREE.MeshStandardMaterial({
@@ -882,54 +924,56 @@ export function buildTrackEnvironment(
   pagodaGroup.add(antennaMast);
   pitGroup.add(pagodaGroup);
 
-  // Pit Crew Mechanics with Lollipop Pit Boards & Spare Compound Tires
+  // Pit Crew Mechanics with Lollipop Pit Boards & Spare Compound Tires (shared geometries & materials)
   const mechanicMat = new THREE.MeshStandardMaterial({ color: 0x1e3a8a, roughness: 0.65 });
   const skinMat = new THREE.MeshStandardMaterial({ color: 0xfbcfe8, roughness: 0.8 });
   const pitBoardMat = new THREE.MeshStandardMaterial({ color: 0xfacc15, roughness: 0.35 });
+  const toolboxMat = new THREE.MeshStandardMaterial({ color: 0xdc2626, roughness: 0.45, metalness: 0.3 });
+  const spareTireMat = new THREE.MeshStandardMaterial({ color: 0x18181b, roughness: 0.9 });
+  const drumMat = new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.45, metalness: 0.6 });
+  const mechBodyGeo = new THREE.BoxGeometry(0.5, 0.9, 0.3);
+  const mechHeadGeo = new THREE.SphereGeometry(0.16, 10, 10);
+  const mechCapGeo = new THREE.CylinderGeometry(0.18, 0.18, 0.08, 10);
+  const mechPoleGeo = new THREE.CylinderGeometry(0.025, 0.025, 2.6, 8);
+  const mechBoardGeo = new THREE.CircleGeometry(0.28, 14);
+  const toolboxGeo = new THREE.BoxGeometry(0.65, 0.85, 1.1);
+  const spareTireGeo = new THREE.TorusGeometry(0.34, 0.16, 8, 16);
+  const drumGeo = new THREE.CylinderGeometry(0.32, 0.32, 0.95, 12);
 
   for (let m = 0; m < 4; m++) {
     const mz = -18 + m * 13;
     const mech = new THREE.Group();
     mech.position.set(1.4, 0, mz);
 
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.9, 0.3), mechanicMat);
+    const body = new THREE.Mesh(mechBodyGeo, mechanicMat);
     body.position.y = 0.9;
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 12), skinMat);
+    const head = new THREE.Mesh(mechHeadGeo, skinMat);
     head.position.y = 1.5;
-    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.08, 12), accentMat);
+    const cap = new THREE.Mesh(mechCapGeo, accentMat);
     cap.position.y = 1.62;
 
-    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 2.6, 8), fenceMat);
+    const pole = new THREE.Mesh(mechPoleGeo, fenceMat);
     pole.position.set(-0.8, 1.4, 0.2);
     pole.rotation.z = 0.35;
-    const board = new THREE.Mesh(new THREE.CircleGeometry(0.28, 16), pitBoardMat);
+    const board = new THREE.Mesh(mechBoardGeo, pitBoardMat);
     board.position.set(-1.3, 2.4, 0.2);
     board.rotation.y = Math.PI / 2;
 
     mech.add(body, head, cap, pole, board);
     pitGroup.add(mech);
 
-    const toolbox = new THREE.Mesh(
-      new THREE.BoxGeometry(0.65, 0.85, 1.1),
-      new THREE.MeshStandardMaterial({ color: 0xdc2626, roughness: 0.45, metalness: 0.3 })
-    );
+    const toolbox = new THREE.Mesh(toolboxGeo, toolboxMat);
     toolbox.position.set(3.2, 0.42, mz - 2.5);
     pitGroup.add(toolbox);
 
     for (let th = 0; th < 3; th++) {
-      const tire = new THREE.Mesh(
-        new THREE.TorusGeometry(0.34, 0.16, 10, 18),
-        new THREE.MeshStandardMaterial({ color: 0x18181b, roughness: 0.9 })
-      );
+      const tire = new THREE.Mesh(spareTireGeo, spareTireMat);
       tire.rotation.x = Math.PI / 2;
       tire.position.set(3.1, 0.16 + th * 0.32, mz + 2.8);
       pitGroup.add(tire);
     }
 
-    const drum = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.32, 0.32, 0.95, 16),
-      new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.45, metalness: 0.6 })
-    );
+    const drum = new THREE.Mesh(drumGeo, drumMat);
     drum.position.set(4.2, 0.48, mz);
     pitGroup.add(drum);
   }
@@ -955,6 +999,13 @@ export function buildTrackEnvironment(
   }
 
   // 7. Trackside Marshal Observation Posts with Flags
+  const hutGeo = new THREE.BoxGeometry(2.4, 2.2, 2.4);
+  const hutMat = new THREE.MeshStandardMaterial({ color: 0x78716c, roughness: 0.9 });
+  const hutRoofGeo = new THREE.ConeGeometry(2.1, 1.2, 4);
+  const flagPoleGeo = new THREE.CylinderGeometry(0.03, 0.03, 3.2, 8);
+  const flagGeo = new THREE.PlaneGeometry(0.9, 0.55);
+  const flagMat = new THREE.MeshBasicMaterial({ color: 0x22c55e, side: THREE.DoubleSide });
+
   for (const mIdx of [Math.floor(n * 0.28), Math.floor(n * 0.65)]) {
     const ms = samples[mIdx];
     const mStand = new THREE.Group();
@@ -965,28 +1016,23 @@ export function buildTrackEnvironment(
     mStand.position.set(mx, mLookup.surfaceY, mz);
     mStand.rotation.y = Math.atan2(ms.tx, ms.tz);
 
-    const hutGeo = new THREE.BoxGeometry(2.4, 2.2, 2.4);
-    const hutMat = new THREE.MeshStandardMaterial({ color: 0x78716c, roughness: 0.9 });
     const hut = new THREE.Mesh(hutGeo, hutMat);
     hut.position.y = 1.1;
 
-    const roof = new THREE.Mesh(new THREE.ConeGeometry(2.1, 1.2, 4), accentMat);
+    const roof = new THREE.Mesh(hutRoofGeo, accentMat);
     roof.position.y = 2.8;
     roof.rotation.y = Math.PI / 4;
 
-    const flagPole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 3.2, 8), postMat);
+    const flagPole = new THREE.Mesh(flagPoleGeo, postMat);
     flagPole.position.set(1.4, 1.6, 0.8);
-    const flag = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.9, 0.55),
-      new THREE.MeshBasicMaterial({ color: 0x22c55e, side: THREE.DoubleSide })
-    );
+    const flag = new THREE.Mesh(flagGeo, flagMat);
     flag.position.set(1.85, 2.8, 0.8);
 
     mStand.add(hut, roof, flagPole, flag);
     envGroup.add(mStand);
   }
 
-  // 8. Pit-Straight Grandstand with Tiered Spectator Seating, 3D Crowd & Cantilevered Canopy
+  // 8. Pit-Straight Grandstand with Tiered Spectator Seating, Instanced 3D Crowd & Cantilevered Canopy
   const standGroup = new THREE.Group();
   standGroup.position.set(
     startS.x - startS.rx * (startS.width * 0.5 + 9.5),
@@ -998,6 +1044,15 @@ export function buildTrackEnvironment(
   const concreteMat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.8 });
   const roofMat = new THREE.MeshStandardMaterial({ color: 0x991b1b, roughness: 0.5, metalness: 0.25 });
   const crowdColors = [0xdc2626, 0x2563eb, 0xfacc15, 0xf8fafc, 0x16a34a];
+  const spectatorCapacity = 4 * 13;
+  const specTorsoGeo = new THREE.BoxGeometry(0.45, 0.58, 0.55);
+  const specTorsoMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.7 });
+  const specTorsoInst = new THREE.InstancedMesh(specTorsoGeo, specTorsoMat, spectatorCapacity);
+  const specHeadGeo = new THREE.SphereGeometry(0.16, 8, 8);
+  const specHeadInst = new THREE.InstancedMesh(specHeadGeo, skinMat, spectatorCapacity);
+  const specDummy = new THREE.Object3D();
+  const specColor = new THREE.Color();
+  let specIdx = 0;
 
   for (let tier = 0; tier < 4; tier++) {
     const tierH = 1.1 + tier * 1.1;
@@ -1005,19 +1060,26 @@ export function buildTrackEnvironment(
     tierMesh.position.set(-tier * 2.1, tierH * 0.5, 0);
     standGroup.add(tierMesh);
 
-    // 3D Spectator row along each tier bench
     for (let sz = -21; sz <= 21; sz += 3.5) {
-      const cMat = new THREE.MeshStandardMaterial({
-        color: crowdColors[(tier + Math.abs(Math.round(sz))) % crowdColors.length],
-        roughness: 0.7,
-      });
-      const specTorso = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.58, 0.55), cMat);
-      specTorso.position.set(-tier * 2.1 + 0.3, tierH + 0.29, sz);
-      const specHead = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 8), skinMat);
-      specHead.position.set(-tier * 2.1 + 0.3, tierH + 0.72, sz);
-      standGroup.add(specTorso, specHead);
+      specDummy.position.set(-tier * 2.1 + 0.3, tierH + 0.29, sz);
+      specDummy.updateMatrix();
+      specTorsoInst.setMatrixAt(specIdx, specDummy.matrix);
+      specColor.setHex(crowdColors[(tier + Math.abs(Math.round(sz))) % crowdColors.length]);
+      specTorsoInst.setColorAt(specIdx, specColor);
+
+      specDummy.position.set(-tier * 2.1 + 0.3, tierH + 0.72, sz);
+      specDummy.updateMatrix();
+      specHeadInst.setMatrixAt(specIdx, specDummy.matrix);
+      specIdx++;
     }
   }
+  specTorsoInst.count = specIdx;
+  specHeadInst.count = specIdx;
+  specTorsoInst.instanceMatrix.needsUpdate = true;
+  if (specTorsoInst.instanceColor) specTorsoInst.instanceColor.needsUpdate = true;
+  specHeadInst.instanceMatrix.needsUpdate = true;
+  standGroup.add(specTorsoInst, specHeadInst);
+
   const standRoof = new THREE.Mesh(new THREE.BoxGeometry(11, 0.4, 50), roofMat);
   standRoof.position.set(-3.2, 7.6, 0);
   standRoof.rotation.z = -0.15;
@@ -1159,29 +1221,127 @@ export function buildTrackEnvironment(
   rockInst.computeBoundingSphere();
   envGroup.add(rockInst);
 
-  // Dynamic Weather Visual Updater
-  const updateWeatherVisuals = (weather: WeatherState) => {
-    const wetRoughness = 0.68 - weather.wetness * 0.50;
-    roadMat.roughness = wetRoughness;
-    roadMat.metalness = 0.09 + weather.wetness * 0.32;
+  // 2D. Dynamic 3D Standing Water Puddles on Low-Drainage Asphalt Margins & Braking Zones
+  const puddleCapacity = 64;
+  const puddleCanvas = document.createElement('canvas');
+  puddleCanvas.width = 256;
+  puddleCanvas.height = 256;
+  const pudCtx = puddleCanvas.getContext('2d')!;
+  const pudGrad = pudCtx.createRadialGradient(128, 128, 18, 128, 128, 122);
+  pudGrad.addColorStop(0.0, 'rgba(14, 26, 42, 0.92)');
+  pudGrad.addColorStop(0.55, 'rgba(30, 58, 95, 0.75)');
+  pudGrad.addColorStop(0.82, 'rgba(56, 189, 248, 0.28)');
+  pudGrad.addColorStop(1.0, 'rgba(15, 23, 42, 0.0)');
+  pudCtx.fillStyle = pudGrad;
+  pudCtx.fillRect(0, 0, 256, 256);
+  const puddleTex = new THREE.CanvasTexture(puddleCanvas);
+  puddleTex.colorSpace = THREE.SRGBColorSpace;
 
-    const darkShade = 1.0 - weather.wetness * 0.28;
-    roadMat.color.setRGB(darkShade, darkShade, darkShade * 1.04);
+  const puddleGeo = new THREE.PlaneGeometry(2.8, 4.6);
+  puddleGeo.rotateX(-Math.PI / 2);
+  const puddleMat = new THREE.MeshStandardMaterial({
+    color: 0x93c5fd,
+    map: puddleTex,
+    transparent: true,
+    opacity: 0.0,
+    roughness: 0.03,
+    metalness: 0.92,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -4,
+    polygonOffsetUnits: -4,
+  });
+  const puddlesInst = new THREE.InstancedMesh(puddleGeo, puddleMat, puddleCapacity);
+  const puddleAnchors: Array<{
+    x: number;
+    y: number;
+    z: number;
+    rotY: number;
+    stationIdx: number;
+    scaleX: number;
+    scaleZ: number;
+  }> = [];
+
+  for (let i = 0; i < n && puddleAnchors.length < puddleCapacity; i += 3) {
+    const s = samples[i];
+    const bankMag = Math.abs(s.bankingRad);
+    const lowSideSign = s.bankingRad >= 0 ? -1 : 1;
+    const halfW = s.width * 0.5;
+    const pseudo = ((i * 53 + 19) % 100) / 100;
+    const lat = lowSideSign * (halfW * (0.36 + pseudo * 0.36));
+    const px = s.x + s.rx * lat;
+    const pz = s.z + s.rz * lat;
+    const py = evalRoadSurfaceYAtOffset(s, lat) + 0.008;
+    puddleAnchors.push({
+      x: px,
+      y: py,
+      z: pz,
+      rotY: Math.atan2(s.tx, s.tz) + (pseudo - 0.5) * 0.25,
+      stationIdx: i,
+      scaleX: (0.75 + pseudo * 0.65) * (1 - bankMag * 0.6),
+      scaleZ: 0.85 + pseudo * 0.95,
+    });
+  }
+  puddlesInst.count = puddleAnchors.length;
+  puddlesInst.visible = false;
+  envGroup.add(puddlesInst);
+
+  // Dynamic Weather, Puddle Formation & Track Drying Visual Updater
+  let lastPuddleBucket = -1;
+  const updateWeatherVisuals = (weather: WeatherState) => {
+    const puddleLvl = weather.puddleLevel ?? 0;
+    const dryingLine = weather.dryingLineIntensity ?? Math.max(0, 1 - weather.wetness);
+
+    // Off-line road surface becomes mirror-slick with wetness & standing puddles
+    const wetRoughness = Math.max(0.08, 0.68 - weather.wetness * 0.46 - puddleLvl * 0.14);
+    roadMat.roughness = wetRoughness;
+    roadMat.metalness = Math.min(0.78, 0.09 + weather.wetness * 0.34 + puddleLvl * 0.22);
+
+    const darkShade = 1.0 - weather.wetness * 0.26 - puddleLvl * 0.10;
+    roadMat.color.setRGB(darkShade, darkShade, darkShade * 1.05);
 
     kerbMat.roughness = 0.58 - weather.wetness * 0.38;
     kerbMat.metalness = 0.06 + weather.wetness * 0.22;
+
+    // Update 3D Standing Water Puddles scaling & specular opacity
+    if (puddleLvl <= 0.015) {
+      puddlesInst.visible = false;
+    } else {
+      puddlesInst.visible = true;
+      puddleMat.opacity = Math.min(0.86, 0.18 + puddleLvl * 0.68);
+      const pBucket = Math.round(puddleLvl * 35) * 100 + Math.round(dryingLine * 25);
+      if (pBucket !== lastPuddleBucket) {
+        lastPuddleBucket = pBucket;
+        for (let p = 0; p < puddleAnchors.length; p++) {
+          const pa = puddleAnchors[p];
+          const localPud =
+            weather.sectorPuddles && weather.sectorPuddles.length > pa.stationIdx
+              ? weather.sectorPuddles[pa.stationIdx]
+              : puddleLvl;
+          const sFactor = Math.max(0.01, Math.min(1.35, localPud * 1.25));
+          dummy.position.set(pa.x, pa.y, pa.z);
+          dummy.rotation.set(0, pa.rotY, 0);
+          dummy.scale.set(pa.scaleX * sFactor, 1, pa.scaleZ * sFactor);
+          dummy.updateMatrix();
+          puddlesInst.setMatrixAt(p, dummy.matrix);
+        }
+        puddlesInst.instanceMatrix.needsUpdate = true;
+      }
+    }
   };
 
-  // Dynamic Track Rubbering & Off-Line Corner Marbles Visual Updater
+  // Dynamic Track Rubbering, Drying Line & Off-Line Corner Marbles Visual Updater
   let lastMarbleUpdateBucket = -1;
   const updateTrackRubberVisuals = (rubberState: TrackRubberState, weather: WeatherState) => {
     const g = Math.max(0, Math.min(1, rubberState.globalRubberLevel));
+    const dryingLine = weather.dryingLineIntensity ?? Math.max(0, 1 - weather.wetness);
     // Racing line becomes progressively darker, more opaque, and more deeply textured as laps & passes build up
-    racingLineMat.opacity = 0.14 + g * 0.78;
+    racingLineMat.opacity = 0.16 + g * 0.76;
     racingLineMat.bumpScale = 0.014 + g * 0.056;
-    // Vulcanized rubber has a low-sheen satin finish when dry, and slick mirror sheen when wet
-    racingLineMat.roughness = Math.max(0.14, 0.56 - g * 0.18 - weather.wetness * 0.32);
-    racingLineMat.metalness = 0.14 + g * 0.18 + weather.wetness * 0.25;
+    // Dried racing groove has noticeably higher matte roughness than the wet off-line track
+    const effectiveLineWetness = weather.wetness * (1 - dryingLine * 0.68);
+    racingLineMat.roughness = Math.max(0.14, 0.56 - g * 0.16 - effectiveLineWetness * 0.32);
+    racingLineMat.metalness = 0.14 + g * 0.16 + effectiveLineWetness * 0.25;
 
     const bucket = Math.round(g * 40);
     if (bucket !== lastMarbleUpdateBucket) {

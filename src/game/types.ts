@@ -85,6 +85,16 @@ export interface HandlingTuning {
   diffLockAccel: number;       // 15 .. 85 % (default 45)
 }
 
+export type CarBodyStyle =
+  | 'italian_gt'
+  | 'british_coupe'
+  | 'stuttgart_911'
+  | 'detroit_proto'
+  | 'daytona_kammtail'
+  | 'stradale_proto';
+
+export type GarageCameraView = 'orbit' | 'front_quarter' | 'side_profile' | 'rear_engine' | 'cockpit_closeup';
+
 export interface ClassicCarSpec {
   id: string;
   name: string;
@@ -92,6 +102,8 @@ export interface ClassicCarSpec {
   origin: string;
   engineConfig: 'V12' | 'I6' | 'F6' | 'V8';
   displacement: string;
+  coachbuilder: string;
+  silhouetteTag: string;
   description: string;
   unlockCost: number;
   baseStats: {
@@ -104,7 +116,7 @@ export interface ClassicCarSpec {
     dragCoeff: number;
     wheelbaseM: number;
   };
-  bodyStyle: 'italian_gt' | 'british_coupe' | 'stuttgart_911' | 'detroit_proto';
+  bodyStyle: CarBodyStyle;
   defaultLivery: CarLivery;
 }
 
@@ -248,6 +260,16 @@ export interface VehiclePhysicsState {
   onMarbles: boolean;
   lineGripModifier: number; // >1.0 on rubbered line, <1.0 on marbles
   frontBrakeGlow: number; // 0.0 .. 1.0 glowing rotor temperature
+  // Real-time Dynamic Puddle & Track Drying Surface Grip Parameters
+  surfaceGripParams: TireGripSurfaceParams;
+}
+
+export interface TireGripSurfaceParams {
+  surfaceWetness: number;        // 0.0 (bone dry) .. 1.0 (saturated asphalt)
+  puddleDepth: number;           // 0.0 (no standing water) .. 1.0 (deep puddle at vehicle position)
+  trackDryingLine: number;       // 0.0 (wet groove) .. 1.0 (dried racing line from evaporation & tires)
+  hydroplaneFactor: number;      // 0.0 (full tire contact) .. 1.0 (aquaplaning lift on standing water)
+  effectiveSurfaceGrip: number;  // real-time combined tire-to-surface grip coefficient
 }
 
 export type WeatherCondition = 'clear' | 'overcast' | 'rain' | 'storm' | 'dynamic';
@@ -255,9 +277,13 @@ export type WeatherCondition = 'clear' | 'overcast' | 'rain' | 'storm' | 'dynami
 export interface WeatherState {
   condition: WeatherCondition;
   activeType: 'clear' | 'overcast' | 'rain' | 'storm';
-  wetness: number;         // 0.0 (bone dry) to 1.0 (waterlogged puddles)
-  rainIntensity: number;   // 0.0 to 1.0
-  gripMultiplier: number;  // 1.0 down to ~0.62
+  wetness: number;               // 0.0 (bone dry) to 1.0 (waterlogged asphalt)
+  rainIntensity: number;         // 0.0 to 1.0 current precipitation intensity
+  puddleLevel: number;           // 0.0 (dry) to 1.0 (deep standing puddles in low drainage zones)
+  dryingLineIntensity: number;   // 0.0 (uniformly wet) to 1.0 (dry racing groove formed by tires & wind)
+  sectorPuddles?: Float32Array;  // per-sample localized standing puddle depth (0..1)
+  sectorDrying?: Float32Array;   // per-sample localized racing line drying progress (0..1)
+  gripMultiplier: number;        // 1.0 down to ~0.64 baseline weather grip
   windX: number;
   windZ: number;
   lightningTimer: number;

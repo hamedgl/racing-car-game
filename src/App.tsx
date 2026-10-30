@@ -13,6 +13,7 @@ import {
   ControlInput,
   DamageMode,
   GameState,
+  GarageCameraView,
   HandlingTuning,
   LeaderboardEntry,
   RemoteRacerTelemetry,
@@ -65,6 +66,7 @@ export default function App() {
 
   const [gameState, setGameState] = useState<GameState>(initialAutostart ? 'playing' : 'title');
   const [activeModal, setActiveModal] = useState<'none' | 'garage' | 'tracks' | 'leaderboards'>('none');
+  const [garageCameraView, setGarageCameraView] = useState<GarageCameraView>('orbit');
 
   const [selectedCar, setSelectedCar] = useState<ClassicCarSpec>(CLASSIC_CARS[0]);
   const [liveryMap, setLiveryMap] = useState<Record<string, CarLivery>>(() => {
@@ -142,8 +144,8 @@ export default function App() {
     setPitRequestArmed(false);
   }, []);
 
-  // Start with 4,800 Championship Credits so players can immediately test upgrades
-  const [credits, setCredits] = useState<number>(4800);
+  // Unlimited Championship Credits (∞ CR) so players can freely upgrade and tune all cars
+  const [credits, setCredits] = useState<number>(999_999_999);
   const [driverName, setDriverName] = useState<string>('T. Nuvolari');
 
   const [raceResetTrigger, setRaceResetTrigger] = useState<number>(0);
@@ -206,11 +208,20 @@ export default function App() {
     onRacingLine: true,
     onMarbles: false,
     lineGripModifier: 1.02,
+    surfaceGripParams: {
+      surfaceWetness: 0,
+      puddleDepth: 0,
+      trackDryingLine: 1.0,
+      hydroplaneFactor: 0,
+      effectiveSurfaceGrip: 1.02,
+    },
     weather: {
       condition: 'clear',
       activeType: 'clear',
       wetness: 0,
       rainIntensity: 0,
+      puddleLevel: 0,
+      dryingLineIntensity: 1.0,
       gripMultiplier: 1.0,
       windX: 0,
       windZ: 0,
@@ -481,14 +492,27 @@ export default function App() {
 
   const handleBuyUpgrade = (system: keyof CarUpgrades) => {
     const currLvl = activeUpgrades[system];
-    const cost = getUpgradeCost(currLvl);
-    if (currLvl >= 5 || credits < cost) return;
-    setCredits((prev) => prev - cost);
+    if (currLvl >= 5) return;
+    // Unlimited CR: never deplete player credits below 999,999,999
+    setCredits(999_999_999);
     setUpgradesMap((prev) => ({
       ...prev,
       [selectedCar.id]: {
         ...activeUpgrades,
         [system]: currLvl + 1,
+      },
+    }));
+  };
+
+  const handleMaxAllUpgrades = () => {
+    setCredits(999_999_999);
+    setUpgradesMap((prev) => ({
+      ...prev,
+      [selectedCar.id]: {
+        engineLevel: 5,
+        transmissionLevel: 5,
+        tiresLevel: 5,
+        chassisWeightLevel: 5,
       },
     }));
   };
@@ -499,6 +523,7 @@ export default function App() {
       <RaceCanvas
         gameState={gameState}
         isGarageOpen={activeModal === 'garage'}
+        garageCameraView={garageCameraView}
         selectedCar={selectedCar}
         livery={activeLivery}
         effectiveStats={effectiveStats}
@@ -552,6 +577,7 @@ export default function App() {
           remoteRacers={remoteRacers}
           touchInputRef={touchInputRef}
           onCycleCamera={handleCycleCamera}
+          onCycleWeather={handleCycleWeather}
           onCycleNextPitCompound={handleCycleNextPitCompound}
           onTogglePitRequest={handleTogglePitRequest}
           onToggleMute={handleToggleMute}
@@ -570,6 +596,8 @@ export default function App() {
           effectiveStats={effectiveStats}
           credits={credits}
           activePresetKey={activePresetKey}
+          garageCameraView={garageCameraView}
+          onSelectGarageCameraView={setGarageCameraView}
           onSelectCar={(car) => setSelectedCar(car)}
           onUpdateLivery={(newLiv) =>
             setLiveryMap((prev) => ({
@@ -578,6 +606,7 @@ export default function App() {
             }))
           }
           onBuyUpgrade={handleBuyUpgrade}
+          onMaxAllUpgrades={handleMaxAllUpgrades}
           onUpdateTuning={(newTuning, presetKey) => {
             setTuning(newTuning);
             if (presetKey) setActivePresetKey(presetKey);

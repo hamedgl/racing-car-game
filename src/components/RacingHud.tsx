@@ -23,6 +23,7 @@ interface RacingHudProps {
   remoteRacers: RemoteRacerTelemetry[];
   touchInputRef: React.MutableRefObject<ControlInput>;
   onCycleCamera: () => void;
+  onCycleWeather?: () => void;
   onCycleNextPitCompound: () => void;
   onTogglePitRequest: () => void;
   onToggleMute: () => void;
@@ -96,6 +97,7 @@ export const RacingHud: React.FC<RacingHudProps> = ({
   remoteRacers,
   touchInputRef,
   onCycleCamera,
+  onCycleWeather,
   onCycleNextPitCompound,
   onTogglePitRequest,
   onToggleMute,
@@ -189,6 +191,10 @@ export const RacingHud: React.FC<RacingHudProps> = ({
 
   const weather = hud.weather;
   const tires = hud.tires;
+  const surfaceParams = hud.surfaceGripParams;
+  const puddlePct = Math.round((weather.puddleLevel ?? 0) * 100);
+  const dryingLinePct = Math.round((weather.dryingLineIntensity ?? 1) * 100);
+  const surfaceGripPct = Math.round((surfaceParams?.effectiveSurfaceGrip ?? 1) * 100);
   const activeCompoundMeta = COMPOUND_BADGE[tires.compound];
   const nextCompoundMeta = COMPOUND_BADGE[nextPitCompound];
   const avgTreadPct = Math.round(tires.avgTreadLife * 100);
@@ -300,22 +306,30 @@ export const RacingHud: React.FC<RacingHudProps> = ({
             ))}
           </div>
 
-          {/* Subtle Integrated Track Groove, Hill Elevation & Tire Status Line */}
+          {/* Subtle Integrated Track Groove, Puddle / Drying Line & Tire Status Line */}
           <div className="flex flex-wrap items-center gap-1.5 pt-0.5 text-[10px] font-semibold tracking-wider uppercase whitespace-nowrap">
             <span className="text-[#f59e0b]">LVL {activeLevel.level}</span>
             <span className="text-[#475569]">·</span>
             <span className="text-[#cbd5e1]">⛰️ +{track.elevationGainM}M</span>
             <span className="text-[#475569]">·</span>
             <span className="text-[#94a3b8]">
-              {weather.wetness > 0.4 ? '🌧️ WET' : weather.activeType === 'overcast' ? '☁️ DRY' : '☀️ DRY'}
+              {weather.wetness > 0.35
+                ? `🌧️ WET · PUDDLES ${puddlePct}% · DRY LINE ${dryingLinePct}%`
+                : weather.activeType === 'overcast'
+                ? '☁️ OVERCAST'
+                : '☀️ DRY LINE 100%'}
             </span>
             <span className="text-[#475569]">·</span>
             {hud.isOffTrack ? (
               <span className="text-[#ef4444]">OFF-TRACK VERGE</span>
+            ) : hud.isAquaplaning ? (
+              <span className="text-[#38bdf8]">💧 PUDDLE HYDROPLANE</span>
             ) : hud.onMarbles ? (
               <span className="text-[#f59e0b]">TIRE MARBLES</span>
             ) : hud.onRacingLine ? (
-              <span className="text-[#22c55e]">RUBBERED GROOVE</span>
+              <span className="text-[#22c55e]">
+                {weather.wetness > 0.2 ? 'DRIED GROOVE' : 'RUBBERED GROOVE'}
+              </span>
             ) : (
               <span className="text-[#cbd5e1]">RUBBER {hud.trackRubberPercent}%</span>
             )}
@@ -375,9 +389,30 @@ export const RacingHud: React.FC<RacingHudProps> = ({
           )}
         </div>
 
-        {/* CLUSTER 2: Top-Right Camera Switcher, Utility Controls & Circuit Radar */}
+        {/* CLUSTER 2: Top-Right Camera Switcher, Weather Switcher, Utility Controls & Circuit Radar */}
         <div className="flex flex-col items-end gap-1.5 md:gap-2 shrink-0">
           <div className="flex items-center gap-1 md:gap-1.5 pointer-events-auto">
+            {/* Quick Weather Cycle Button */}
+            {onCycleWeather && (
+              <button
+                type="button"
+                tabIndex={-1}
+                aria-label="Cycle Weather Condition"
+                title={`Weather: ${weather.condition.toUpperCase()} (${weather.activeType.toUpperCase()})`}
+                onClick={(e) => {
+                  e.currentTarget.blur();
+                  onCycleWeather();
+                }}
+                className="h-8 md:h-9 px-2 md:px-2.5 flex items-center gap-1 rounded border border-[#f5f2eb]/20 bg-[#0b0f17]/90 hover:bg-[#1e293b] text-[#f5f2eb] transition-colors cursor-pointer"
+              >
+                <span className="text-[10px] md:text-[11px] font-mono-tabular font-bold tracking-wider uppercase text-[#7dd3fc]">
+                  {weather.condition === 'dynamic'
+                    ? `DYN:${weather.activeType.toUpperCase()}`
+                    : weather.condition.toUpperCase()}
+                </span>
+              </button>
+            )}
+
             {/* Multi-Angle Camera Switcher Button */}
             <button
               type="button"
@@ -509,7 +544,7 @@ export const RacingHud: React.FC<RacingHudProps> = ({
 
       {/* BOTTOM ROW: Tire & Pit Strategy Cluster (Desktop Left), Mobile Controls, & Veglia Tachometer (Desktop Right) */}
       <div className="flex flex-col md:flex-row items-stretch md:items-end justify-between gap-2 w-full">
-        {/* DESKTOP LEFT: 4-Corner Dynamic Tire Telemetry & Pit Stop Strategy Module */}
+        {/* DESKTOP LEFT: 4-Corner Dynamic Tire Telemetry, Surface Puddle/Drying & Pit Stop Strategy Module */}
         <div
           data-testid="tire-telemetry-panel"
           className="hidden md:flex flex-col gap-2 px-3.5 py-3 rounded border border-[#f5f2eb]/15 w-72 pointer-events-auto"
@@ -528,12 +563,24 @@ export const RacingHud: React.FC<RacingHudProps> = ({
                 {activeCompoundMeta.label}
               </span>
               <span className="text-[11px] font-mono-tabular font-semibold text-[#cbd5e1]">
-                GRIP {Math.round(tires.gripMultiplier * 100)}%
+                GRIP {surfaceGripPct}%
               </span>
             </div>
             <span className="text-[10px] font-mono-tabular text-[#94a3b8]">
               PITS: {tires.pitStopsCompleted}
             </span>
+          </div>
+
+          {/* Dynamic Puddle & Track Drying Line Telemetry Strip */}
+          <div
+            data-testid="surface-puddle-drying-telemetry"
+            className="flex items-center justify-between text-[9px] font-mono-tabular px-2 py-1 rounded bg-[#090d16] border border-[#f5f2eb]/10"
+          >
+            <span className="text-[#7dd3fc]">PUDDLE: {puddlePct}%</span>
+            <span className="text-[#475569]">·</span>
+            <span className="text-[#4ade80]">DRY LINE: {dryingLinePct}%</span>
+            <span className="text-[#475569]">·</span>
+            <span className="text-[#f59e0b]">SURF: {surfaceGripPct}%</span>
           </div>
 
           {/* 4-Corner Tire Grid (FL, FR, RL, RR) */}
